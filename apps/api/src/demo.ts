@@ -1,0 +1,14 @@
+import type { LeagueSnapshot } from '@sleeper/domain';
+export const demoSnapshot = (): LeagueSnapshot => ({
+ leagueId:'demo', leagueName:'Sunday Legends', username:'demo-manager', season:'2026', week:1, record:'0–0', rank:3, pointsFor:0, lastSyncedAt:new Date().toISOString(),
+ matchup:{week:1,opponent:'Gridiron Guild',projectedFor:126.8,projectedAgainst:119.4},
+ roster:[
+  {id:'1',name:'Jalen Hurts',team:'PHI',position:'QB',projectedPoints:22.8,trend:'up'},
+  {id:'2',name:'Bijan Robinson',team:'ATL',position:'RB',projectedPoints:19.4,trend:'steady'},
+  {id:'3',name:'Amon-Ra St. Brown',team:'DET',position:'WR',projectedPoints:18.7,trend:'up'},
+  {id:'4',name:'Trey McBride',team:'ARI',position:'TE',projectedPoints:14.1,trend:'steady'}],
+ recommendations:[
+  {id:'r1',kind:'start',title:'Keep Hurts in your starting lineup',rationale:'Elite rushing usage creates a reliable floor in this matchup.',confidence:92,actionLabel:'View lineup',player:{id:'1',name:'Jalen Hurts',team:'PHI',position:'QB',projectedPoints:22.8,trend:'up'}},
+  {id:'r2',kind:'waiver',title:'Watch the waiver wire for RB depth',rationale:'Your bench has limited coverage behind the starting backs.',confidence:78,actionLabel:'Review targets'},
+  {id:'r3',kind:'trade',title:'Explore a 2-for-1 receiver upgrade',rationale:'Package surplus depth to improve your weekly ceiling.',confidence:64,actionLabel:'See analysis'}]
+});
