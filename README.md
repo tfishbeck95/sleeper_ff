@@ -19,3 +19,7 @@ Open `http://localhost:5173`. The API runs at `http://localhost:4000` and uses t
 - `npm run typecheck` — type-check every workspace.
 
 Copy `.env.example` to `.env` to customize local configuration. See [`docs/product-scope.md`](docs/product-scope.md) for product boundaries and [`docs/architecture.md`](docs/architecture.md) for system design.
+
+## Waiver planning
+
+The Waivers section ranks add/drop pairs by horizon, risk and roster need and builds a copyable priority plan. Claims must be submitted manually in Sleeper. Live rankings require a trusted forecast JSON source configured via `WAIVER_SIGNALS_PATH`; absent or stale forecasts produce an explicit unavailable state. See [waiver pipeline and feed setup](docs/waivers.md) for the contract, scoring assumptions and limitations. The sample dashboard runs fictional forecasts through the same pipeline.

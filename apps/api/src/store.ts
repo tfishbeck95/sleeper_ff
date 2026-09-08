@@ -29,6 +29,10 @@ export class JsonStore {
   async resourceSyncedAt(key: string) { return (await this.read()).freshness[key]; }
   async league(id: string) { return (await this.read()).leagues[id]; }
   async rosters(leagueId: string) { return Object.values((await this.read()).rosters).filter(value => value.leagueId === leagueId); }
+  async waiverContext(leagueId: string) {
+    const data = await this.read();
+    return { league: data.leagues[leagueId], rosters: Object.values(data.rosters).filter(r => r.leagueId === leagueId), players: Object.values(data.players) };
+  }
   async applySync(write: SyncWrite) { await this.write(data => {
     const upsert = <T extends { id: string }>(target: Record<string, T>, values?: T[]) => { for (const value of values ?? []) target[value.id] = value; };
     if (write.league) data.leagues[write.league.id] = write.league;

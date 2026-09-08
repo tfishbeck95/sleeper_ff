@@ -1,3 +1,4 @@
+export * from './waivers.js';
 /** Timestamps carried by every record imported from Sleeper. */
 export interface SourceMetadata {
   /** Timestamp supplied by Sleeper, when that resource exposes one. */
@@ -19,6 +20,7 @@ export interface League extends SourceMetadata {
 export interface NflPlayer extends SourceMetadata {
   id: string; firstName: string | null; lastName: string | null; fullName: string;
   team: string | null; position: string | null; fantasyPositions: string[]; status: string | null;
+  injuryStatus?: string | null;
 }
 export interface Roster extends SourceMetadata {
   id: string; leagueId: string; rosterId: number; ownerId: string | null; coOwnerIds: string[];

@@ -8,7 +8,7 @@ export interface SleeperMatchup { matchup_id: number | null; roster_id: number; 
 export interface SleeperTransaction { transaction_id: string; type: 'trade' | 'waiver' | 'free_agent' | 'commissioner'; status: string; status_updated?: number; created?: number; roster_ids: number[]; adds: Record<string, number> | null; drops: Record<string, number> | null; draft_picks: SleeperDraftPick[]; waiver_budget?: Array<{ sender: number; receiver: number; amount: number }>; }
 export interface SleeperDraft { draft_id: string; league_id: string; season: string; status: string; type: string; sport: string; settings: Record<string, number>; metadata: Record<string, string>; created?: number; start_time?: number; }
 export interface SleeperDraftPick { season: string; round: number; roster_id: number; previous_owner_id?: number; owner_id: number; }
-export interface SleeperPlayer { player_id: string; first_name?: string | null; last_name?: string | null; full_name?: string | null; team?: string | null; position?: string | null; fantasy_positions?: string[] | null; status?: string | null; }
+export interface SleeperPlayer { player_id: string; injury_status?: string | null; first_name?: string | null; last_name?: string | null; full_name?: string | null; team?: string | null; position?: string | null; fantasy_positions?: string[] | null; status?: string | null; }
 
 export type SleeperErrorCategory = 'timeout' | 'network' | 'rate_limit' | 'not_found' | 'server' | 'client' | 'validation';
 export class SleeperApiError extends Error {
