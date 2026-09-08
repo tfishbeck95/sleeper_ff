@@ -12,6 +12,9 @@ export interface RosterPosition { position: string; slot: number; }
 export interface League extends SourceMetadata {
   id: string; name: string; season: string; status: string; previousLeagueId: string | null;
   totalRosters: number | null; scoringSettings: ScoringSetting[]; rosterPositions: RosterPosition[];
+  /** Sleeper's numeric league settings, retained so rules can be interpreted without guessing. */
+  settings?: Record<string, number>;
+  seasonType?: string;
 }
 export interface NflPlayer extends SourceMetadata {
   id: string; firstName: string | null; lastName: string | null; fullName: string;
@@ -54,3 +57,5 @@ export function scoreStartDecision(player: Pick<Player, 'projectedPoints' | 'tre
   const trendBonus = player.trend === 'up' ? 1.5 : player.trend === 'down' ? -1 : 0;
   return Math.round((player.projectedPoints + trendBonus) * 10) / 10;
 }
+
+export * from './league-rules.js';
