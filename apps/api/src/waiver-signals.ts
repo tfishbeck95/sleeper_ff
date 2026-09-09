@@ -1,3 +1,4 @@
+import type { QuarterbackRushingSplit } from '@sleeper/domain';
 import { readFile } from 'node:fs/promises';
 
 /**
@@ -34,11 +35,15 @@ export interface WeeklyForecast {
   /** 1 is neutral; use only for matchup effects not already in the baseline forecast. */
   matchupMultiplier?: number;
   opportunity?: WeeklyOpportunity;
+  rushingSplit?: QuarterbackRushingSplit;
+  floorRushingSplit?: QuarterbackRushingSplit;
+  ceilingRushingSplit?: QuarterbackRushingSplit;
 }
 export interface PlayerSignal {
   playerId: string; weeks: WeeklyForecast[];
   /** Expected stat line in a future typical week, for dynasty retention value. */
   dynastyStats?: Record<string, number>;
+  dynastyRushingSplit?: QuarterbackRushingSplit;
   /** Trade valuation inputs supplied by the forecast source, not inferred NFL facts. */
   age?: number; expectedCareerYears?: number; uncertainty?: number; tradeEligible?: boolean;
   injuryStatus?: string | null; unavailableThroughWeek?: number;
@@ -92,11 +97,21 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
       if (!object(w) || !weekNumber(w.week) || weeks.has(w.week) || !stats(w.stats) || (w.opponent !== undefined && typeof w.opponent !== 'string') || (w.bye !== undefined && typeof w.bye !== 'boolean') || (w.matchupMultiplier !== undefined && (!finite(w.matchupMultiplier) || w.matchupMultiplier < .5 || w.matchupMultiplier > 1.5))) throw new Error('Invalid or duplicate weekly waiver forecast.');
       // Scenarios are raw stat lines, never a pre-scored range: they are scored by the same league rules.
       for (const key of ['floorStats', 'ceilingStats']) if (w[key] !== undefined && !stats(w[key])) throw new Error('Invalid floor or ceiling stat scenario.');
+      for (const [split, line] of [['rushingSplit', 'stats'], ['floorRushingSplit', 'floorStats'], ['ceilingRushingSplit', 'ceilingStats']]) {
+        if (w[split] !== undefined) {
+          const error = validateRushingSplit(w[split], w[line]);
+          if (error) throw new Error(error);
+        }
+      }
       if (w.opportunity !== undefined) opportunity(w.opportunity);
       weeks.add(w.week);
     }
     if (p.recentTargets !== undefined && (!Array.isArray(p.recentTargets) || !p.recentTargets.length || p.recentTargets.length > 24 || !p.recentTargets.every(v => finite(v) && v >= 0 && v <= 30))) throw new Error('Invalid recent target series.');
     if (p.dynastyStats !== undefined && !stats(p.dynastyStats)) throw new Error('Invalid dynasty forecast.');
+    if (p.dynastyRushingSplit !== undefined) {
+      const error = validateRushingSplit(p.dynastyRushingSplit, p.dynastyStats);
+      if (error) throw new Error(error);
+    }
     if (p.age !== undefined && (!finite(p.age) || p.age < 18 || p.age > 60)) throw new Error('Invalid player age.');
     if (p.expectedCareerYears !== undefined && (!finite(p.expectedCareerYears) || p.expectedCareerYears <= 0 || p.expectedCareerYears > 25)) throw new Error('Invalid career horizon.');
     if (p.uncertainty !== undefined && (!finite(p.uncertainty) || p.uncertainty < 0 || p.uncertainty > 1)) throw new Error('Invalid trade uncertainty.');
@@ -127,4 +142,19 @@ export class FileWaiverSignalProvider implements WaiverSignalProvider {
     const parsed = parseWaiverSignals(JSON.parse(await readFile(this.path, 'utf8')));
     return parsed.season === season && parsed.week === week ? parsed : null;
   }
+}
+
+/** Partial subsets are allowed (kneels/other rushes can remain), but cannot exceed total rushing. */
+export function validateRushingSplit(value: unknown, line: unknown): string | null {
+  if (!object(value) || !object(line) || !Object.keys(value).length) return 'Rushing split requires a raw stat scenario.';
+  if (Object.keys(value).some(key => !['designedRuns', 'scrambles'].includes(key))) return 'Unknown rushing split category.';
+  for (const subset of Object.values(value)) {
+    if (!object(subset) || !Object.keys(subset).length || Object.keys(subset).some(key => !['yards', 'touchdowns'].includes(key))
+      || Object.values(subset).some(amount => !finite(amount) || amount < 0)) return 'Invalid rushing split: supply nonnegative raw yards or touchdowns.';
+  }
+  for (const [key, stat] of [['yards', 'rush_yd'], ['touchdowns', 'rush_td']]) {
+    const amounts = Object.values(value).map(subset => (subset as Record<string, number>)[key]).filter(amount => amount !== undefined);
+    if (amounts.length && (!finite(line[stat]) || amounts.reduce((a, b) => a + b, 0) > (line[stat] as number) + 1e-9)) return `Rushing split ${key} exceeds or lacks aggregate ${stat}.`;
+  }
+  return null;
 }

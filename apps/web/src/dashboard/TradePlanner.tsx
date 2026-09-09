@@ -1,3 +1,4 @@
+import { QuarterbackDetail } from './QuarterbackDetail';
 import { ScoringStatus } from './ScoringStatus';
 import { useEffect, useState } from 'react';
 import type { TradeOffer, TradeReport, TradeTeamImpact } from '@sleeper/domain';
@@ -25,7 +26,7 @@ export function TradeOfferDetails({ offer }: { offer: TradeOffer }) {
     <div className="trade-packages"><div><strong>You deliver</strong><p>{names(offer.give)}</p></div><div><strong>You receive</strong><p>{names(offer.receive)}</p></div></div>
     <div className="table-scroll"><table className="trade-values"><caption>Value by each team’s strategy · model units</caption><thead><tr><th scope="col">Team</th><th scope="col">Delivered</th><th scope="col">Received</th></tr></thead><tbody>{[offer.user, offer.partner].map(t => <tr key={t.rosterId}><th scope="row">{t.name}</th><td>{t.valueDelivered.toFixed(2)}</td><td>{t.valueReceived.toFixed(2)}</td></tr>)}</tbody></table></div>
     <p className="trade-model-note">Neutral package gap: {Math.round(offer.valueGap * 100)}% · Risk index: {Math.round(offer.risk * 100)}/100. Neither is an acceptance probability.</p>
-    <details><summary>Player and pick valuation details</summary><ul>{offer.give.concat(offer.receive).map(a => <li key={a.id}><strong>{a.name} · {a.value.toFixed(2)} neutral units</strong><p>{a.explanation}</p></li>)}</ul></details>
+    <details><summary>Player and pick valuation details</summary><ul>{offer.give.concat(offer.receive).map(a => <li key={a.id}><strong>{a.name} · {a.value.toFixed(2)} neutral units</strong><p>{a.explanation}</p>{a.quarterbackWeeks?.map(w => <div key={w.week}><strong>Week {w.week}</strong><QuarterbackDetail outlook={w.breakdown}/></div>)}{a.dynastyQuarterback && <div><strong>Future typical week</strong><QuarterbackDetail outlook={{ mean: a.dynastyQuarterback, floor: null, ceiling: null, adjustments: [] }}/></div>}</li>)}</ul></details>
     <div className="trade-lineups"><TradeLineupComparison team={offer.user}/><TradeLineupComparison team={offer.partner}/></div>
     <h4>Why the other manager might accept</h4><ul>{offer.whyAccept.map(r => <li key={r}>{r}</li>)}</ul>
     <h4>Primary risks</h4><ul>{offer.risks.map(r => <li key={r}>{r}</li>)}</ul>

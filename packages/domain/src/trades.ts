@@ -22,6 +22,8 @@ export interface TradeAsset {
     contributions: import('./projections.js').ScoringContribution[];
   } | null;
   /** Receiving role, including what this league's reception rule is specifically worth here. */
+  quarterbackWeeks?: Array<{ week: number; breakdown: import('./projections.js').QuarterbackOutlook }>;
+  dynastyQuarterback?: import('./projections.js').QuarterbackBreakdown;
   opportunity: import('./projections.js').OpportunityProfile | null;
 }
 export interface TradeLineup {

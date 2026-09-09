@@ -1,3 +1,4 @@
+import { quarterbackOutlook, quarterbackComparison, scaleQuarterback } from './quarterback.js';
 import { interpretLeagueRules, scoringFormatLabel } from '@sleeper/domain';
 import type {
   ExplainableScore, League, LineupMatchup, LineupPlayerView, LineupReport, Matchup, NflPlayer, Roster,
@@ -86,7 +87,7 @@ export function analyzeLineup(input: LineupInput): LineupReport {
     const current = selected(player);
     return {
       playerId: player.playerId, name: player.name, positions: player.positions, team: player.team,
-      scored: weekPoints(rules.scoring, current),
+      scored: weekPoints(rules.scoring, current), quarterback: quarterbackOutlook(current),
       floorPoints: current.floorPoints == null ? null : round(current.floorPoints),
       ceilingPoints: current.ceilingPoints == null ? null : round(current.ceilingPoints),
       bye: current.bye, injuryStatus: designation(player.injuryStatus), opportunity: player.opportunity,
@@ -95,7 +96,7 @@ export function analyzeLineup(input: LineupInput): LineupReport {
   const evaluationPlayer = (player: ScoredPlayer): EvaluationPlayer => {
     const current = selected(player);
     const scaled = (value: ScoredPoints | null): ScoredPoints | null => value == null ? null
-      : { ...value, points: Math.round(value.points * current.multiplier * 100) / 100, explanation: rules.scoring.describe(Math.round(value.points * current.multiplier * 100) / 100) };
+      : { ...value, quarterback: value.quarterback ? scaleQuarterback(value.quarterback, current.multiplier) : undefined, contributions: value.contributions.map(c => ({ ...c, points: c.points * current.multiplier })), points: Math.round(value.points * current.multiplier * 100) / 100, explanation: rules.scoring.describe(Math.round(value.points * current.multiplier * 100) / 100) };
     return {
       id: player.playerId, name: player.name, positions: player.positions,
       projected: weekPoints(rules.scoring, current), floor: scaled(current.floor), ceiling: scaled(current.ceiling),
@@ -167,7 +168,7 @@ export function analyzeLineup(input: LineupInput): LineupReport {
       id: `${slot.slot}:${challenger.playerId}`, slot: slot.slot, start: view(challenger),
       sit: starter ? view(starter) : { playerId: '', name: 'Empty slot', positions: [], team: null, scored: { points: 0, explanation: `0.0 points under your league's ${report.scoringLabel} scoring`, breakdown: 'No player is assigned to this slot.', contributions: [] }, floorPoints: null, ceilingPoints: null, bye: false, injuryStatus: null, opportunity: null },
       advantage,
-      explanation: `${challenger.name} scores ${weekPoints(rules.scoring, selected(challenger)).explanation}, ${advantage} more than ${starter ? `${starter.name}'s ${round(starterPoints)}` : 'an empty slot'} in ${slot.slot}.${role}`,
+      explanation: `${challenger.name} scores ${weekPoints(rules.scoring, selected(challenger)).explanation}, ${advantage} more than ${starter ? `${starter.name}'s ${round(starterPoints)}` : 'an empty slot'} in ${slot.slot}.${role}${starter ? quarterbackComparison(challenger.name, selected(challenger), starter.name, selected(starter)) : ''}`,
       confidence: cautions.length > 1 ? 'low' : advantage >= 3 ? 'high' : 'medium',
       cautions,
     });

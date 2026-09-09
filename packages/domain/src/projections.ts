@@ -12,8 +12,38 @@ import type { ScoringConfiguration } from './scoring.js';
 /** One statistic's contribution to a league-scored total. */
 export interface ScoringContribution { stat: string; amount: number; rate: number; points: number }
 
+/** Optional provider subsets of total rushing; never additional scoring inputs. */
+export interface QuarterbackRushingSplit {
+  designedRuns?: { yards?: number; touchdowns?: number };
+  scrambles?: { yards?: number; touchdowns?: number };
+}
+export interface QuarterbackBreakdown {
+  passingTouchdowns: ScoringContribution | null;
+  passingYards: ScoringContribution | null;
+  interceptions: ScoringContribution | null;
+  rushingYards: ScoringContribution | null;
+  rushingTouchdowns: ScoringContribution | null;
+  designedRuns: ScoringContribution[] | null;
+  scrambles: ScoringContribution[] | null;
+  /** All other scored rules, including bonuses, conversions and fumbles. */
+  otherPoints: number;
+  totalPoints: number;
+  rushingPoints: number;
+  turnoverPoints: number;
+  /** Post-scoring adjustments are disclosed separately from the league's rates. */
+  multiplier: number;
+  explanation: string;
+}
+export interface QuarterbackOutlook {
+  mean: QuarterbackBreakdown;
+  floor: QuarterbackBreakdown | null;
+  ceiling: QuarterbackBreakdown | null;
+  adjustments: string[];
+}
+
 /** Fantasy points that exist only because this league's rules were applied to raw statistics. */
 export interface ScoredPoints {
+  quarterback?: QuarterbackBreakdown;
   points: number;
   /** Manager-facing sentence, e.g. `18.4 points under your league's full-PPR scoring`. */
   explanation: string;
@@ -85,7 +115,7 @@ export interface ScoredForecastSet {
 }
 
 /** Every number surfaced by lineup analysis carries the reason it holds. */
-export interface ExplainableScore { score: number; explanation: string }
+export interface ExplainableScore { score: number; explanation: string; quarterback?: QuarterbackBreakdown }
 export interface PositionEvaluation { position: string; starters: ExplainableScore; bench: ExplainableScore; scarcity: ExplainableScore }
 export interface EvaluatedSlot { slot: string; playerId: string | null; name: string; points: number }
 export interface RosterEvaluation {
@@ -104,6 +134,7 @@ export interface LeagueEvaluation {
 }
 
 export interface LineupPlayerView {
+  quarterback?: QuarterbackOutlook;
   playerId: string; name: string; positions: string[]; team: string | null;
   scored: ScoredPoints; floorPoints: number | null; ceilingPoints: number | null;
   bye: boolean; injuryStatus: string | null;

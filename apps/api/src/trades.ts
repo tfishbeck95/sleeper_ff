@@ -1,3 +1,4 @@
+import { quarterbackOutlook } from './quarterback.js';
 import { interpretLeagueRules, scoringFormatLabel, type TradeAsset, type TradeBounds, type TradeCandidate, type TradeNeed, type TradeOffer, type TradeReport, type TradeStrategy, type TradeTeamEvaluation, type TradeTeamImpact, type TradedDraftPick, type User } from '@sleeper/domain';
 import { parseWaiverSignals, type PlayerSignal } from './waiver-signals.js';
 import { scoreLeagueForecasts, TRADE_UNAVAILABLE_STATUSES, weekPoints } from './projection-scoring.js';
@@ -95,7 +96,10 @@ export function recommendTrades(input: TradeInput): TradeReport {
     const asset: TradeAsset = { id, kind: 'player', name: p.fullName, positions, value: round(value), risk, age: s.age ?? null, careerYears: s.expectedCareerYears ?? null,
       explanation: `${dynasty ? `Age ${s.age}; expected career ${s.expectedCareerYears} years. ${round(ros)} remaining-week points and ${round(future)} future typical-week points under your league's ${report.scoringLabel} scoring; age-adjusted career discounted 18% per year, capped at five years. Current production weight: contender 65%, balanced 40%, rebuilder 20%.` : `${round(ros)} average remaining-week points under your league's ${report.scoringLabel} scoring, including byes and known absences. No age or draft-pick premium.`}${premium}`,
       scoring: { snapshotId: value_.scoringSnapshotId, label: report.scoringLabel, weeklyPoints: round(current.points), ...(({ explanation, contributions }) => ({ explanation, contributions }))(weekPoints(rules.scoring, current)) },
+      quarterbackWeeks: positions.includes('QB') ? value_.weeks.filter(w => weeks.includes(w.week)).map(w => ({ week: w.week, breakdown: quarterbackOutlook(w)! })) : undefined,
+      dynastyQuarterback: value_.dynasty?.quarterback,
       opportunity: profile };
+    if (current.mean.quarterback) asset.explanation += ` Week ${week}: ${quarterbackOutlook(current)!.mean.explanation}${dynasty && value_.dynasty?.quarterback ? ` Future typical week: ${value_.dynasty.quarterback.explanation}` : ''}`;
     players.set(id, { asset, signal: s, weekly, ros, future });
   }
   const canPlay = (id: string, w: number) => {

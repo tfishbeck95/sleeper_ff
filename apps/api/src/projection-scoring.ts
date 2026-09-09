@@ -1,3 +1,5 @@
+import { scoreQuarterback, scaleQuarterback } from './quarterback.js';
+import { validateRushingSplit } from './waiver-signals.js';
 import type {
   ForecastRejection, ForecastRejectionKind, NflPlayer, ScoredForecastSet, ScoredPlayerForecast,
   ScoredPoints, ScoredWeek, ScoringRules,
@@ -101,6 +103,14 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
     }
     if (invalid) { refuse(preScored ? 'pre-scored' : 'units', invalid); continue; }
 
+    for (const forecast of signal.weeks) {
+      for (const [split, stats] of [[forecast.rushingSplit, forecast.stats], [forecast.floorRushingSplit, forecast.floorStats], [forecast.ceilingRushingSplit, forecast.ceilingStats]] as const) {
+        if (split !== undefined) invalid = validateRushingSplit(split, stats) ?? invalid;
+      }
+    }
+    if (signal.dynastyRushingSplit !== undefined) invalid = validateRushingSplit(signal.dynastyRushingSplit, signal.dynastyStats) ?? invalid;
+    if (invalid) { refuse('units', `${player.fullName}: ${invalid}`); continue; }
+
     // 3. Coverage the caller declared it needs. Missing weeks are refused rather than assumed empty.
     const missing = required.filter(week => !signal.weeks.some(forecast => forecast.week === week && typeof forecast.bye === 'boolean'));
     if (missing.length) { refuse('coverage', `${player.fullName}: week ${missing.join(', ')} forecasts with explicit bye flags are missing.`); continue; }
@@ -110,7 +120,7 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
     const status = signal.injuryStatus ?? player.injuryStatus ?? player.status;
     const weeks: ScoredWeek[] = [];
     for (const forecast of [...signal.weeks].sort((a, b) => a.week - b.week)) {
-      const week = scoreWeek(rules, signal, forecast, { role, status, absent, availability });
+      const week = scoreWeek(rules, signal, forecast, { role, status, absent, availability, quarterback: positions.includes('QB') });
       // An inconsistent optional scenario is discarded and reported. It never silently widens a range,
       // and it never invalidates the mean, whose units and identity did validate.
       if (week.floor && week.floor.points > week.mean.points + 1e-9) {
@@ -127,7 +137,7 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
     // 5. Receiving role, derived from the supplied workload and the points the league already
     //    produced. The one projection it may change is a supplied floor scenario, bounded.
     const analyzed = weeks.find(week => week.week === (availability.selectedWeek ?? weeks[0]?.week)) ?? weeks[0];
-    const profile = analyzed ? opportunityProfile({
+    const profile = analyzed && !positions.includes('QB') ? opportunityProfile({
       positions, signal, scored: analyzed.mean, weeks: weeks.map(week => week.opportunity).filter((v): v is WeekOpportunity => Boolean(v)),
       receptionPoints: rules.receptionPoints, scoringLabel: rules.label,
     }) : null;
@@ -136,7 +146,7 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
     scored.push({
       playerId: signal.playerId, name: player.fullName, positions, team: player.team,
       injuryStatus: status ?? null, age: signal.age ?? null, weeks,
-      dynasty: signal.dynastyStats ? rules.score(signal.dynastyStats) : null,
+      dynasty: signal.dynastyStats ? (positions.includes('QB') ? scoreQuarterback(rules, signal.dynastyStats, signal.dynastyRushingSplit) : rules.score(signal.dynastyStats)) : null,
       opportunity: profile,
       scoringSnapshotId: rules.snapshotId, forecastUpdatedAt: signals.updatedAt,
       signal, player,
@@ -151,11 +161,12 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
 
 function scoreWeek(
   rules: ScoringRules, signal: PlayerSignal, forecast: WeeklyForecast,
-  context: { role: number; status?: string | null; absent(status?: string | null): boolean; availability: AvailabilityPolicy },
+  context: { quarterback: boolean; role: number; status?: string | null; absent(status?: string | null): boolean; availability: AvailabilityPolicy },
 ): ScoredWeek {
-  const mean = rules.score(forecast.stats);
-  const floor = forecast.floorStats ? rules.score(forecast.floorStats) : null;
-  const ceiling = forecast.ceilingStats ? rules.score(forecast.ceilingStats) : null;
+  const score = (stats: Record<string, number>, split?: WeeklyForecast['rushingSplit']) => context.quarterback ? scoreQuarterback(rules, stats, split) : rules.score(stats);
+  const mean = score(forecast.stats, forecast.rushingSplit);
+  const floor = forecast.floorStats ? score(forecast.floorStats, forecast.floorRushingSplit) : null;
+  const ceiling = forecast.ceilingStats ? score(forecast.ceilingStats, forecast.ceilingRushingSplit) : null;
   const bye = forecast.bye === true;
   const dated = signal.unavailableThroughWeek != null && forecast.week <= signal.unavailableThroughWeek;
   const designated = context.absent(context.status);
@@ -204,9 +215,11 @@ function applyFloorLift(week: ScoredWeek, lift: number, stability: number): void
 export function weekPoints(rules: ScoringRules, week: ScoredWeek): ScoredPoints {
   if (week.multiplier === 1) return week.mean;
   const points = Math.round(week.mean.points * week.multiplier * 100) / 100;
+  const quarterback = week.mean.quarterback ? scaleQuarterback(week.mean.quarterback, week.multiplier) : undefined;
   return {
     points,
-    explanation: `${rules.describe(points)}${week.adjustments.length ? ` (${week.adjustments.join(' ')})` : ''}`,
+    quarterback,
+    explanation: `${rules.describe(points)}${quarterback ? `. ${quarterback.explanation}` : ''}${week.adjustments.length ? ` (${week.adjustments.join(' ')})` : ''}`,
     breakdown: week.multiplier === 0 ? `${week.mean.breakdown} — zeroed: ${week.adjustments.join(' ')}` : `${week.mean.breakdown}; adjusted by ${Math.round(week.multiplier * 1000) / 1000}`,
     contributions: week.mean.contributions.map(value => ({ ...value, points: value.points * week.multiplier })),
   };

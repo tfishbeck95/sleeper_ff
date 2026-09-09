@@ -1,3 +1,4 @@
+import { quarterbackOutlook, quarterbackComparison } from './quarterback.js';
 import { interpretLeagueRules, scoringFormatLabel, type League, type NflPlayer, type OpportunityProfile, type Roster, type ScoringContribution, type WaiverHorizon, type WaiverNeed, type WaiverPlayer, type WaiverRecommendation, type WaiverReport } from '@sleeper/domain';
 import { roleMultiplier, scoreLeagueForecasts, WAIVER_UNAVAILABLE_STATUSES, weekPoints, type ScoredForecasts } from './projection-scoring.js';
 import type { PlayerSignal, WaiverSignals } from './waiver-signals.js';
@@ -207,7 +208,12 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
     if (!comparison) uncertainty.push('Starter comparison is incomplete; unknown starter values are not treated as zero.');
     if (horizon === 'dynasty') uncertainty.push('Future-week stat forecasts carry substantial development and role uncertainty.');
     if (!playoffWeeks.length) uncertainty.push('No remaining playoff schedule is configured.');
-    const profile = scored.byPlayerId.get(add.id)!.opportunity;
+    const scoredAdd = scored.byPlayerId.get(add.id)!;
+    const currentWeek = scoredAdd.weeks.find(w => w.week === week);
+    const quarterback = horizon === 'dynasty'
+      ? scoredAdd.dynasty?.quarterback ? { mean: scoredAdd.dynasty.quarterback, floor: null, ceiling: null, adjustments: [] } : undefined
+      : currentWeek ? quarterbackOutlook(currentWeek) : undefined;
+    const profile = scoredAdd.opportunity;
     // Touchdown dependence is a genuine source of week-to-week variance, so it grades as uncertainty.
     if (profile?.archetype === 'touchdown-dependent') uncertainty.push(`Touchdown-dependent: ${Math.round((profile.touchdownShare ?? 0) * 100)}% of the league-scored total comes from touchdowns, the least repeatable part of a projection.`);
     if (profile && profile.stability == null && profile.targets != null) uncertainty.push('No observed target series was supplied, so weekly target stability is unknown.');
@@ -228,6 +234,11 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
       s.role ? `Role share ${Math.round(s.role.previousShare * 100)}% → ${Math.round(s.role.recentShare * 100)}% over ${s.role.games} game(s); weekly forecast adjustment ${round((roleMultiplier(s) - 1) * 100)}%.` : 'Role trend is unknown.',
       role.reason,
     ];
+    if (quarterback) {
+      reasons.push(`${horizon === 'dynasty' ? 'Future typical week' : `Week ${week}`}: ${quarterback.mean.explanation}`);
+      const compared = currentStarter && scored.byPlayerId.get(currentStarter.id)?.weeks.find(w => w.week === week);
+      if (horizon === 'streamer' && compared && currentWeek) reasons.push(quarterbackComparison(add.fullName, currentWeek, currentStarter!.fullName, compared).trim());
+    }
     if (profile) {
       reasons.push(profile.explanation);
       if (profile.receptionPoints > 0) reasons.push(profile.receptionExplanation);
@@ -241,7 +252,7 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
       projectedPoints: round(projected),
       pointsExplanation: `${rules.scoring.describe(round(projected))}${horizon === 'streamer' ? ' this week' : horizon === 'dynasty' ? ' per future typical week' : ' per weighted remaining week'}`,
       contributions: scoringOf.contributions,
-      opportunity: profile,
+      opportunity: profile, quarterback,
       starterGain, benchGain, starterComparison: currentStarter ? identity(currentStarter) : null, weakestBench: weak ? identity(weak) : null,
       dropCost: drop ? round(dropCost) : null,
       dropReason: drop ? `${drop.fullName} is the lowest-retention legal bench drop (${round(dropCost)} points, using the maximum of current, season${rules.format === 'dynasty' ? ' and dynasty' : ''} value).` : 'An active roster slot is open; no drop is required.',

@@ -60,8 +60,9 @@ export class LeagueEvaluationService {
     const replacementLevels = Object.fromEntries(basePositions.map(position => {
       const demand = Math.max(1, input.rosters.length * input.rules.starters.filter(slot => input.rules.eligiblePositions(slot.position).includes(position)).length);
       const pool = input.players.filter(player => player.positions.includes(position)).sort((a, b) => points(b) - points(a));
-      const score = round(pool[Math.min(demand, Math.max(0, pool.length - 1))] ? points(pool[Math.min(demand, Math.max(0, pool.length - 1))]!) : 0);
-      return [position, { score, explanation: `${position} replacement level is the first player beyond ${demand} league-wide demanded starter slot(s), scoring ${score} points under your league's ${label} scoring.` }];
+      const baseline = pool[Math.min(demand, Math.max(0, pool.length - 1))];
+      const score = round(baseline ? points(baseline) : 0);
+      return [position, { score, quarterback: baseline?.projected.quarterback, explanation: `${position} replacement level is the first player beyond ${demand} league-wide demanded starter slot(s), scoring ${score} points under your league's ${label} scoring.${baseline?.projected.quarterback ? ` ${baseline.name}: ${baseline.projected.quarterback.explanation}` : ''}` }];
     }));
 
     const preliminary = input.rosters.map(roster => this.roster(input, label, roster, players, assignments.get(roster.rosterId) ?? [], replacementLevels));

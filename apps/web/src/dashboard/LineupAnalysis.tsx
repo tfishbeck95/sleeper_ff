@@ -1,3 +1,4 @@
+import { QuarterbackDetail } from './QuarterbackDetail';
 import { useEffect, useState } from 'react';
 import { ArrowUpDown, CalendarDays, Flag, ListChecks, RefreshCw, Shield, Target } from 'lucide-react';
 import type { LineupReport } from '@sleeper/domain';
@@ -55,6 +56,7 @@ export function LineupAnalysis({ report, loading, error, recheck, section }: Lin
           <span className="lineup-slot-points">{points(slot.player?.scored.points)}</span>
           <span className="lineup-slot-range">{slot.explanation} {slot.player?.floorPoints == null ? 'No floor/ceiling stat scenario was supplied, so no range is shown.' : `Scored floor-to-ceiling range ${points(slot.player.floorPoints)}–${points(slot.player.ceilingPoints)}.`}</span>
           {slot.player && <ScoringBreakdown contributions={slot.player.scored.contributions} label={report.scoringLabel}/>}
+          {slot.player && <QuarterbackDetail outlook={slot.player.quarterback}/>}
           {slot.player && <OpportunityDetail profile={slot.player.opportunity} compact/>}
         </li>)}</ol>
         {report.startSit.length ? <ol className="start-sit-list" aria-label="Start and sit recommendations">{report.startSit.map(decision => <li key={decision.id}>
@@ -63,6 +65,8 @@ export function LineupAnalysis({ report, loading, error, recheck, section }: Lin
             <h4>Start {decision.start.name} over {decision.sit.name}</h4>
             <p>{decision.explanation}</p>
             <ScoringBreakdown contributions={decision.start.scored.contributions} label={report.scoringLabel}/>
+            {decision.start.quarterback && <div><strong>{decision.start.name}</strong><QuarterbackDetail outlook={decision.start.quarterback}/></div>}
+            {decision.sit.quarterback && <div><strong>{decision.sit.name}</strong><QuarterbackDetail outlook={decision.sit.quarterback}/></div>}
             <OpportunityDetail profile={decision.start.opportunity}/>
             <ul className="start-sit-cautions">{decision.cautions.map(caution => <li key={caution}>{caution}</li>)}</ul>
           </article>
