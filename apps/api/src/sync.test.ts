@@ -19,3 +19,21 @@ test('coalesces league jobs and stores an immutable weekly observation', async (
   const stored = JSON.parse(await readFile(path, 'utf8')) as { weeklySnapshots: unknown[]; players: Record<string, unknown> };
   assert.equal(stored.weeklySnapshots.length, 1); assert.ok(stored.players.p1);
 });
+
+test('pick synchronization replaces reordered/removed transfers and retains other leagues', async () => {
+  const store = new JsonStore(join(await mkdtemp(join(tmpdir(), 'pick-sync-')), 'store.json'));
+  let picks = [{ season: '2027', round: 1, roster_id: 1, owner_id: 2 }, { season: '2027', round: 2, roster_id: 1, owner_id: 2 }];
+  const service = new LeagueSyncService(store, { ...client, tradedPicks: async () => picks } as never);
+  assert.equal((await store.tradeContext('l1')).tradedPicks, undefined, 'never-synced transfers are unknown');
+  await service.syncLeague('l1', 1, true);
+  assert.equal((await store.tradeContext('l1')).tradedPicks!.length, 2);
+  const foreign = { ...(await store.tradeContext('l1')).tradedPicks![0], id: 'foreign', leagueId: 'l2' };
+  await store.applySync({ draftPicks: [foreign], freshness: { 'draftPicks:l2': new Date().toISOString() } });
+  picks = [{ ...picks[1], owner_id: 1 }];
+  await service.syncLeague('l1', 1, true);
+  const updated = (await store.tradeContext('l1')).tradedPicks!;
+  assert.equal(updated.length, 1); assert.equal(updated[0].round, 2); assert.equal(updated[0].ownerId, 1);
+  picks = []; await service.syncLeague('l1', 1, true);
+  assert.deepEqual((await store.tradeContext('l1')).tradedPicks, []);
+  assert.equal((await store.tradeContext('l2')).tradedPicks!.length, 1);
+});

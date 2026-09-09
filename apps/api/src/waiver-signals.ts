@@ -11,6 +11,8 @@ export interface PlayerSignal {
   playerId: string; weeks: WeeklyForecast[];
   /** Expected stat line in a future typical week, for dynasty retention value. */
   dynastyStats?: Record<string, number>;
+  /** Trade valuation inputs supplied by the forecast source, not inferred NFL facts. */
+  age?: number; expectedCareerYears?: number; uncertainty?: number; tradeEligible?: boolean;
   injuryStatus?: string | null; unavailableThroughWeek?: number;
   /** Fractions from 0 to 1. Omit if role changes are already included in baseline stats. */
   role?: { recentShare: number; previousShare: number; games: number };
@@ -25,6 +27,10 @@ export interface WaiverSignals {
     positionLimits?: Record<string, number>;
     /** Authoritative remaining balances, including transfers/commissioner adjustments. */
     faabRemaining?: Record<string, number>;
+    /** Complete upcoming rookie draft definitions; native picks are overlaid with synced transfers. */
+    rookieDrafts?: Array<{ season: string; rounds: number }>;
+    tradeStrategies?: Record<string, 'contender' | 'balanced' | 'rebuilder'>;
+    protectedTradeIds?: string[];
   }>;
 }
 export interface WaiverSignalProvider { load(season: string, week: number): Promise<WaiverSignals | null> }
@@ -45,6 +51,10 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
       weeks.add(w.week);
     }
     if (p.dynastyStats !== undefined && !stats(p.dynastyStats)) throw new Error('Invalid dynasty forecast.');
+    if (p.age !== undefined && (!finite(p.age) || p.age < 18 || p.age > 60)) throw new Error('Invalid player age.');
+    if (p.expectedCareerYears !== undefined && (!finite(p.expectedCareerYears) || p.expectedCareerYears <= 0 || p.expectedCareerYears > 25)) throw new Error('Invalid career horizon.');
+    if (p.uncertainty !== undefined && (!finite(p.uncertainty) || p.uncertainty < 0 || p.uncertainty > 1)) throw new Error('Invalid trade uncertainty.');
+    if (p.tradeEligible !== undefined && typeof p.tradeEligible !== 'boolean') throw new Error('Invalid trade eligibility.');
     if (p.role !== undefined && (!object(p.role) || !finite(p.role.recentShare) || p.role.recentShare < 0 || p.role.recentShare > 1 || !finite(p.role.previousShare) || p.role.previousShare < 0 || p.role.previousShare > 1 || !finite(p.role.games) || !Number.isInteger(p.role.games) || p.role.games < 1)) throw new Error('Invalid role trend.');
     if (p.unavailableThroughWeek !== undefined && !weekNumber(p.unavailableThroughWeek)) throw new Error('Invalid injury return week.');
     if (p.injuryStatus !== undefined && p.injuryStatus !== null && typeof p.injuryStatus !== 'string') throw new Error('Invalid injury status.');
@@ -55,7 +65,9 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
     if (!object(value.leagues)) throw new Error('Invalid league constraints.');
     for (const policy of Object.values(value.leagues)) {
       if (!object(policy)) throw new Error('Invalid league constraints.');
-      for (const key of ['blockedAddIds', 'protectedDropIds']) if (policy[key] !== undefined && !ids(policy[key])) throw new Error('Invalid player constraints.');
+      for (const key of ['blockedAddIds', 'protectedDropIds', 'protectedTradeIds']) if (policy[key] !== undefined && !ids(policy[key])) throw new Error('Invalid player constraints.');
+      if (policy.rookieDrafts !== undefined && (!Array.isArray(policy.rookieDrafts) || policy.rookieDrafts.length > 5 || policy.rookieDrafts.some(d => !object(d) || typeof d.season !== 'string' || !/^\d{4}$/.test(d.season) || !finite(d.rounds) || !Number.isInteger(d.rounds) || d.rounds < 1 || d.rounds > 10) || new Set(policy.rookieDrafts.map(d => d.season)).size !== policy.rookieDrafts.length)) throw new Error('Invalid rookie draft inventory.');
+      if (policy.tradeStrategies !== undefined && (!object(policy.tradeStrategies) || Object.values(policy.tradeStrategies).some(s => !['contender', 'balanced', 'rebuilder'].includes(String(s))))) throw new Error('Invalid trade strategy.');
       for (const key of ['positionLimits', 'faabRemaining']) if (policy[key] !== undefined && (!object(policy[key]) || !Object.values(policy[key]).every(v => finite(v) && Number.isInteger(v) && v >= 0))) throw new Error('Invalid league limits.');
     }
   }

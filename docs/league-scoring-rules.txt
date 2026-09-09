@@ -1,0 +1,58 @@
+LEAGUE SCORING RULES
+
+Transcribed from the seven scoring screenshots in sources/.
+Format: Full PPR (1 point per reception).
+Only settings visible in the screenshots are listed; unshown settings are not assumed to be zero.
+
+PASSING (IMG_3348.png)
+- Passing yards: 1 point per 25 yards (0.04 points per yard).
+- Passing touchdown: 4 points.
+- Passing 2-point conversion: 2 points.
+- Pass intercepted: -2 points.
+
+RUSHING (IMG_3349.png)
+- Rushing yards: 1 point per 10 yards (0.1 points per yard).
+- Rushing touchdown: 6 points.
+- Rushing 2-point conversion: 2 points.
+
+RECEIVING (IMG_3350.png)
+- Reception: 1 point.
+- Receiving yards: 1 point per 10 yards (0.1 points per yard).
+- Receiving touchdown: 6 points.
+- Receiving 2-point conversion: 2 points.
+
+KICKING (IMG_3351.png)
+- Extra point (PAT) made: 1 point.
+- Field goal made from 0-19 yards: 3 points.
+- Field goal made from 20-29 yards: 3 points.
+- Field goal made from 30-39 yards: 3 points.
+- Field goal made from 40-49 yards: 4 points.
+- Field goal made from 50-59 yards: 5 points.
+- Field goal made from 60+ yards: 6 points.
+- Extra point (PAT) missed: -1 point.
+- Field goal missed: -1 point.
+
+TEAM DEFENSE (IMG_3352.png and IMG_3353.jpeg)
+- Interception: 2 points.
+- Fumble recovery: 1 point.
+- Forced fumble: 1 point.
+- Safety: 2 points.
+- Blocked kick: 2 points.
+- Defensive touchdown: 6 points.
+- Sack: 1 point.
+- 0 points allowed (shutout): 8 points.
+- Fewer than 100 total yards allowed: 3 points.
+
+TEAM SPECIAL TEAMS (IMG_3353.jpeg)
+- Special teams touchdown: 6 points.
+- Special teams forced fumble: 1 point.
+- Special teams fumble recovery: 1 point.
+
+INDIVIDUAL PLAYER SPECIAL TEAMS (IMG_3354.png)
+- Special teams player touchdown: 6 points.
+- Special teams player forced fumble: 1 point.
+- Special teams player fumble recovery: 2 points.
+
+FUMBLES / MISCELLANEOUS (IMG_3354.png)
+- Fumble lost: -2 points.
+- Fumble recovery touchdown: 6 points.

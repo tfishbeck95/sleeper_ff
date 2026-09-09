@@ -536,3 +536,34 @@ td small { display: block; font-size: 12px; margin-top: 5px; line-height: 1.4; c
 .waiver-manual-note { border-top: 1px solid #e5e9f0; padding-top: 14px; }
 .waiver-empty { text-align: center; padding: 28px 12px; font-size: 13px; color: #68738a; line-height: 1.7; }
 @media (max-width: 600px) { .waiver-planner { padding: 14px; } .waiver-pair { padding: 12px; } .waiver-comparisons { grid-template-columns: 1fr; gap: 10px; } }
+/* Trade planning keeps both sides visible and supports narrow dashboard columns. */
+.trade-planner { padding: 22px; min-width: 0; font-size: 13px; line-height: 1.55; }
+.trade-planner-heading, .trade-message-actions, .trade-filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.trade-planner-heading { justify-content: space-between; margin-bottom: 16px; }
+.trade-filters label, .trade-message label { display: grid; gap: 5px; font-weight: 600; }
+.trade-filters select, .trade-message select { padding: 8px; border: 1px solid #dce3e0; border-radius: 7px; background: white; max-width: 100%; }
+.trade-source, .trade-model-note { color: #596762; font-size: 12px; margin: 14px 0; }
+.trade-planner details { border-top: 1px solid #e3e8e5; padding: 12px 0; }
+.trade-planner summary { cursor: pointer; font-weight: 600; }
+.trade-planner ul { padding-left: 20px; }
+.trade-planner li { margin: 7px 0; }
+.trade-candidates { list-style: none; padding: 0; margin: 18px 0 0; max-height: 1050px; overflow-y: auto; }
+.trade-candidates > li { border: 1px solid #dce3e0; border-radius: 10px; padding: 16px; margin: 0 0 16px; }
+.trade-candidates h3 { font-size: 17px; margin: 0 0 12px; }
+.trade-planner h4 { font-size: 13px; margin: 14px 0 4px; }
+.trade-packages { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.trade-packages > div { background: #f2f6f4; padding: 12px; border-radius: 8px; overflow-wrap: anywhere; }
+.trade-packages p { margin: 5px 0 0; }
+.trade-lineups { display: grid; gap: 16px; margin: 12px 0; }
+.trade-planner table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+.trade-planner caption { text-align: left; color: #596762; padding: 10px 0; }
+.trade-planner td, .trade-planner th { padding: 8px 6px; border-bottom: 1px solid #e3e8e5; }
+.trade-lineup td small { display: block; color: #596762; }
+.trade-message { margin-top: 16px; padding: 12px; background: #f6f8f7; border-radius: 8px; }
+.trade-message textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 120px; border: 1px solid #cbd7d0; border-radius: 6px; padding: 10px; font: inherit; font-weight: 400; }
+.trade-message-actions { margin: 10px 0; }
+.trade-message-actions button { font-size: 12px; }
+.trade-message > p { margin: 4px 0; }
+.trade-team-summary { margin: 12px 0; border-bottom: 1px solid #e3e8e5; }
+.trade-fallback { margin-top: 16px; }
+@media (max-width: 600px) { .trade-planner { padding: 14px; } .trade-candidates > li { padding: 12px; } .trade-packages { grid-template-columns: 1fr; } }

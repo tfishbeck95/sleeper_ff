@@ -1,4 +1,5 @@
 export * from './waivers.js';
+export * from './trades.js';
 /** Timestamps carried by every record imported from Sleeper. */
 export interface SourceMetadata {
   /** Timestamp supplied by Sleeper, when that resource exposes one. */
