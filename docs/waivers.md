@@ -113,3 +113,7 @@ The plan is still advice. The user must refresh availability and review the exac
 ## Kicker streamers
 
 See [kicker forecasts and streaming](kickers.md) for the required distance/PAT contract, aggregate versus category miss reconciliation, live scoring, expected miss downside and disclosed workload/context ranking preferences.
+
+## Team defense streamers
+
+See [team defense forecasts and streaming](defense.md) for the required raw categories, the points-allowed and yards-allowed tier distributions, the separation of forced fumbles from fumble recoveries and of team from individual special-teams rules, expected scoring per component, and the disclosed opponent pressure, takeaway, offensive-line, quarterback, game-script, threshold and special-teams ranking preferences.

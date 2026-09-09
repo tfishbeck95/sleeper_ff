@@ -2,6 +2,7 @@ import type { ScoringConfiguration } from './scoring.js';
 export * from './scoring.js';
 export * from './projections.js';
 export * from './kicker.js';
+export * from './defense.js';
 export * from './waivers.js';
 export * from './trades.js';
 /** Timestamps carried by every record imported from Sleeper. */

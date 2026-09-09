@@ -1,5 +1,6 @@
+import { validateDefenseForecast } from './defense.js';
 import { validateKickerForecast } from './kicker.js';
-import type { KickerForecast, QuarterbackRushingSplit } from '@sleeper/domain';
+import type { DefenseForecast, KickerForecast, QuarterbackRushingSplit } from '@sleeper/domain';
 import { readFile } from 'node:fs/promises';
 
 /**
@@ -32,6 +33,8 @@ export interface WeeklyOpportunity {
 export interface WeeklyForecast {
   week: number; stats: Record<string, number>;
   kicker?: KickerForecast; floorKicker?: KickerForecast; ceilingKicker?: KickerForecast;
+  /** Team defense/special teams raw counts and tier probabilities, one per scored scenario. */
+  defense?: DefenseForecast; floorDefense?: DefenseForecast; ceilingDefense?: DefenseForecast;
   floorStats?: Record<string, number>; ceilingStats?: Record<string, number>;
   opponent?: string; bye?: boolean;
   /** 1 is neutral; use only for matchup effects not already in the baseline forecast. */
@@ -46,6 +49,7 @@ export interface PlayerSignal {
   /** Expected stat line in a future typical week, for dynasty retention value. */
   dynastyStats?: Record<string, number>;
   dynastyKicker?: KickerForecast;
+  dynastyDefense?: DefenseForecast;
   dynastyRushingSplit?: QuarterbackRushingSplit;
   /** Trade valuation inputs supplied by the forecast source, not inferred NFL facts. */
   age?: number; expectedCareerYears?: number; uncertainty?: number; tradeEligible?: boolean;
@@ -78,7 +82,8 @@ export interface WaiverSignalProvider { load(season: string, week: number): Prom
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const weekNumber = (v: unknown): v is number => finite(v) && Number.isInteger(v) && v >= 1 && v <= 18;
-const stats = (v: unknown, kicker?: unknown) => object(v) && (Object.keys(v).length > 0 || kicker !== undefined) && Object.values(v).every(finite);
+/** A detailed position contract may carry every scored count, leaving the generic stat line empty. */
+const stats = (v: unknown, ...detail: unknown[]) => object(v) && (Object.keys(v).length > 0 || detail.some(d => d !== undefined)) && Object.values(v).every(finite);
 const ids = (v: unknown) => Array.isArray(v) && v.every(id => typeof id === 'string');
 const fraction = (v: unknown) => finite(v) && v >= 0 && v <= 1;
 /** Opportunity is workload, never points: rates stay fractions and counts stay plausible per week. */
@@ -97,12 +102,16 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
     seen.add(p.playerId);
     const weeks = new Set<number>();
     for (const w of p.weeks) {
-      if (!object(w) || !weekNumber(w.week) || weeks.has(w.week) || !stats(w.stats, w.kicker) || (w.opponent !== undefined && typeof w.opponent !== 'string') || (w.bye !== undefined && typeof w.bye !== 'boolean') || (w.matchupMultiplier !== undefined && (!finite(w.matchupMultiplier) || w.matchupMultiplier < .5 || w.matchupMultiplier > 1.5))) throw new Error('Invalid or duplicate weekly waiver forecast.');
+      if (!object(w) || !weekNumber(w.week) || weeks.has(w.week) || !stats(w.stats, w.kicker, w.defense) || (w.opponent !== undefined && typeof w.opponent !== 'string') || (w.bye !== undefined && typeof w.bye !== 'boolean') || (w.matchupMultiplier !== undefined && (!finite(w.matchupMultiplier) || w.matchupMultiplier < .5 || w.matchupMultiplier > 1.5))) throw new Error('Invalid or duplicate weekly waiver forecast.');
       // Scenarios are raw stat lines, never a pre-scored range: they are scored by the same league rules.
-      for (const [key, detail] of [['floorStats', 'floorKicker'], ['ceilingStats', 'ceilingKicker']]) if (w[key] !== undefined && !stats(w[key], w[detail])) throw new Error('Invalid floor or ceiling stat scenario.');
+      for (const [key, ...detail] of [['floorStats', 'floorKicker', 'floorDefense'], ['ceilingStats', 'ceilingKicker', 'ceilingDefense']]) if (w[key] !== undefined && !stats(w[key], ...detail.map(d => w[d]))) throw new Error('Invalid floor or ceiling stat scenario.');
       for (const [key, line] of [['kicker', 'stats'], ['floorKicker', 'floorStats'], ['ceilingKicker', 'ceilingStats']]) if (w[key] !== undefined) {
         if (w[line] === undefined) throw new Error('Kicker forecast requires its raw stat scenario.');
         validateKickerForecast(w[key]);
+      }
+      for (const [key, line] of [['defense', 'stats'], ['floorDefense', 'floorStats'], ['ceilingDefense', 'ceilingStats']]) if (w[key] !== undefined) {
+        if (w[line] === undefined) throw new Error('Team defense forecast requires its raw stat scenario.');
+        validateDefenseForecast(w[key]);
       }
       for (const [split, line] of [['rushingSplit', 'stats'], ['floorRushingSplit', 'floorStats'], ['ceilingRushingSplit', 'ceilingStats']]) {
         if (w[split] !== undefined) {
@@ -114,10 +123,14 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
       weeks.add(w.week);
     }
     if (p.recentTargets !== undefined && (!Array.isArray(p.recentTargets) || !p.recentTargets.length || p.recentTargets.length > 24 || !p.recentTargets.every(v => finite(v) && v >= 0 && v <= 30))) throw new Error('Invalid recent target series.');
-    if (p.dynastyStats !== undefined && !stats(p.dynastyStats, p.dynastyKicker)) throw new Error('Invalid dynasty forecast.');
+    if (p.dynastyStats !== undefined && !stats(p.dynastyStats, p.dynastyKicker, p.dynastyDefense)) throw new Error('Invalid dynasty forecast.');
     if (p.dynastyKicker !== undefined) {
       if (p.dynastyStats === undefined) throw new Error('Dynasty kicker forecast requires dynastyStats.');
       validateKickerForecast(p.dynastyKicker);
+    }
+    if (p.dynastyDefense !== undefined) {
+      if (p.dynastyStats === undefined) throw new Error('Dynasty team defense forecast requires dynastyStats.');
+      validateDefenseForecast(p.dynastyDefense);
     }
     if (p.dynastyRushingSplit !== undefined) {
       const error = validateRushingSplit(p.dynastyRushingSplit, p.dynastyStats);

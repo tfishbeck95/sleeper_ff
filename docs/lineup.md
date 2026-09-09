@@ -36,6 +36,10 @@ Refusal reasons, all reported per projection with the player named:
 
 Kicker adapters must supply six distance bands of expected attempts/makes, PAT makes/misses and explicit Sleeper miss semantics for every scored scenario. Counts are normalized before this boundary applies the live scoring map. See [kicker contract, miss validation and streamer ranking](kickers.md). Generic role/matchup multipliers do not apply to kickers.
 
+### Team defense
+
+Team defense adapters must supply expected sacks, interceptions, forced fumbles, fumble recoveries, safeties, blocked kicks and defensive touchdowns, complete probability distributions over Sleeper's points-allowed and yards-allowed tiers, and the unit's special-teams events wherever the league scores them. Each tier enters scoring at its probability, so a threshold bonus is priced at the chance of earning it rather than granted on a favorable matchup. See [team defense contract, field mapping and streamer ranking](defense.md). Generic role/matchup multipliers do not apply to team defenses, because a multiplier would scale a probability-weighted bonus linearly with a matchup opinion.
+
 ### Receiving opportunity
 
 Providers may attach `opportunity` to a week (projected targets, routes, targets per route run, route

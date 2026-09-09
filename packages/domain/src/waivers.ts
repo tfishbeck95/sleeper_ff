@@ -13,6 +13,7 @@ export interface WaiverRecommendation {
   /** Receiving role behind the projection: workload, archetype, stability and the PPR premium. */
   quarterback?: import('./projections.js').QuarterbackOutlook;
   kicker?: import('./kicker.js').KickerStreamerProfile;
+  defense?: import('./defense.js').DefenseStreamerProfile;
   opportunity: import('./projections.js').OpportunityProfile | null;
   starterGain: number | null; benchGain: number | null;
   starterComparison: WaiverPlayer | null; weakestBench: WaiverPlayer | null;

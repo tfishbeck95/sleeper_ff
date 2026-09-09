@@ -44,6 +44,7 @@ export interface QuarterbackOutlook {
 /** Fantasy points that exist only because this league's rules were applied to raw statistics. */
 export interface ScoredPoints {
   kicker?: import('./kicker.js').KickerBreakdown;
+  defense?: import('./defense.js').DefenseBreakdown;
   quarterback?: QuarterbackBreakdown;
   points: number;
   /** Manager-facing sentence, e.g. `18.4 points under your league's full-PPR scoring`. */

@@ -93,6 +93,19 @@ scenario, moved toward its own mean by a bounded, disclosed fraction for a
 consistently targeted player; horizon preferences move waiver ranking scores by at
 most a documented cap, never projected points.
 
+Kicker and team-defense forecasts extend the same boundary with position-specific
+raw contracts rather than exceptions to it. `apps/api/src/defense.ts` validates a
+`DEF` unit's expected sacks, interceptions, forced fumbles, fumble recoveries,
+safeties, blocked kicks, defensive touchdowns, its team special-teams events where
+the league scores them, and a complete probability distribution over Sleeper's
+points-allowed and yards-allowed tiers. Each tier's probability is the raw amount the
+league's own rate prices, so a shutout bonus is worth the chance of a shutout and the
+full bonus is reachable only from a certainty. Forced fumbles and fumble recoveries
+stay independent Sleeper events, and `def_td`, `def_st_td` and the individual `st_td`
+never collapse into one another. Generic role and matchup multipliers are refused for
+both positions: for a defense, a multiplier would scale a probability-weighted
+threshold bonus linearly with a matchup opinion. See [`docs/defense.md`](defense.md).
+
 Fictional demo view models are isolated from this pipeline by naming: they carry
 `illustrativePoints`, never a projection-shaped field, and are never mixed into a
 connected league's rankings.
