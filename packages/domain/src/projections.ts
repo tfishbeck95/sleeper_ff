@@ -46,6 +46,12 @@ export interface ScoredPoints {
   kicker?: import('./kicker.js').KickerBreakdown;
   defense?: import('./defense.js').DefenseBreakdown;
   quarterback?: QuarterbackBreakdown;
+  /**
+   * A rostered player's own `st_*` scoring and its coverage. Present on every non-`DEF` scenario in
+   * a league that scores individual special teams, including when the provider models none of it,
+   * because an absent forecast is a disclosed gap rather than a zero.
+   */
+  specialTeams?: import('./special-teams.js').SpecialTeamsBreakdown;
   points: number;
   /** Manager-facing sentence, e.g. `18.4 points under your league's full-PPR scoring`. */
   explanation: string;

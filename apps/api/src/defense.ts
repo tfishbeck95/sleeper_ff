@@ -3,6 +3,7 @@ import {
   type AllowedBreakdown, type AllowedDistribution, type DefenseBreakdown, type DefenseComponent, type DefenseForecast,
   type DefenseStreamerProfile, type OpponentQuarterbackStatus, type PointsAllowedBucket, type ScoredPoints,
   type ScoringRules, type YardsAllowedBucket,
+  INDIVIDUAL_SPECIAL_TEAMS_KEYS, SPECIAL_TEAMS_CATEGORIES, TEAM_SPECIAL_TEAMS_STATS,
 } from '@sleeper/domain';
 
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -27,13 +28,21 @@ const COUNTS = [
   ['blockedKicks', 'blk_kick', 'Blocked kicks', 4],
   ['defensiveTouchdowns', 'def_td', 'Defensive touchdowns', 5],
 ] as const;
-/** The unit's own special-teams rules. `def_st_*` is the team; `st_*` belongs to a rostered player. */
+/**
+ * The unit's own special-teams rules. `def_st_*` is the team; `st_*` belongs to a rostered player.
+ *
+ * The Sleeper key of each category comes from the shared map both families are defined in, so the
+ * team contract and the individual contract cannot drift into scoring the same rule.
+ */
 const TEAM_SPECIAL_TEAMS = [
-  ['touchdowns', 'def_st_td', 'Special-teams touchdowns', 5],
-  ['forcedFumbles', 'def_st_ff', 'Special-teams forced fumbles', 5],
-  ['fumbleRecoveries', 'def_st_fum_rec', 'Special-teams fumble recoveries', 5],
+  ['touchdowns', TEAM_SPECIAL_TEAMS_STATS.touchdowns, 'Special-teams touchdowns', 5],
+  ['forcedFumbles', TEAM_SPECIAL_TEAMS_STATS.forcedFumbles, 'Special-teams forced fumbles', 5],
+  ['fumbleRecoveries', TEAM_SPECIAL_TEAMS_STATS.fumbleRecoveries, 'Special-teams fumble recoveries', 5],
 ] as const;
-export const INDIVIDUAL_SPECIAL_TEAMS_KEYS: readonly string[] = ['st_td', 'st_ff', 'st_fum_rec', 'st_tkl_solo'];
+
+/** The team rules named in refusals, kept in one place so the two contracts cannot drift apart. */
+const teamRuleList = SPECIAL_TEAMS_CATEGORIES.map(category => TEAM_SPECIAL_TEAMS_STATS[category])
+  .reduce((text, stat, index, all) => index === 0 ? stat : `${text}${index === all.length - 1 ? ' and ' : ', '}${stat}`, '');
 
 const ptsKey = (bucket: PointsAllowedBucket) => `pts_allow_${bucket}`;
 const ydsKey = (bucket: YardsAllowedBucket) => `yds_allow_${bucket}`;
@@ -140,7 +149,7 @@ export function normalizeDefenseStats(rules: ScoringRules, stats: Record<string,
   const normalized = { ...stats };
   for (const [key, amount] of Object.entries(stats)) if (/^(sack|int|ff|fum_rec|safe|blk_kick|def_td|def_st_|pts_allow|yds_allow)/.test(key) && !count(amount)) throw new Error(`Team defense ${key} must be a finite nonnegative expected count or probability.`);
   for (const key of INDIVIDUAL_SPECIAL_TEAMS_KEYS) {
-    if (Object.hasOwn(stats, key)) throw new Error(`Team defense stats supply "${key}", the individual special-teams rule a rostered returner scores on their own line. The unit's return events belong in specialTeams, which maps to def_st_td, def_st_ff and def_st_fum_rec.`);
+    if (Object.hasOwn(stats, key)) throw new Error(`Team defense stats supply "${key}", the individual special-teams rule a rostered returner scores on their own line. The unit's return events belong in specialTeams, which maps to ${teamRuleList}.`);
   }
   for (const [key, amount] of Object.entries(canonical)) {
     if (Object.hasOwn(stats, key) && (!Number.isFinite(stats[key]) || !close(stats[key], amount))) throw new Error(`Team defense ${key} conflicts with its forecast; overlapping counts must agree.`);

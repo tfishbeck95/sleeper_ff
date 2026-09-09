@@ -1,7 +1,7 @@
 import { defenseStreamerProfile } from './defense.js';
 import { kickerStreamerProfile } from './kicker.js';
 import { quarterbackOutlook, quarterbackComparison } from './quarterback.js';
-import { interpretLeagueRules, scoringFormatLabel, type League, type NflPlayer, type OpportunityProfile, type Roster, type ScoringContribution, type WaiverHorizon, type WaiverNeed, type WaiverPlayer, type WaiverRecommendation, type WaiverReport } from '@sleeper/domain';
+import { INDIVIDUAL_SPECIAL_TEAMS_STATS, interpretLeagueRules, scoringFormatLabel, specialTeamsIncomplete, type League, type NflPlayer, type OpportunityProfile, type Roster, type ScoringContribution, type WaiverHorizon, type WaiverNeed, type WaiverPlayer, type WaiverRecommendation, type WaiverReport } from '@sleeper/domain';
 import { roleMultiplier, scoreLeagueForecasts, WAIVER_UNAVAILABLE_STATUSES, weekPoints, type ScoredForecasts } from './projection-scoring.js';
 import type { PlayerSignal, WaiverSignals } from './waiver-signals.js';
 
@@ -140,6 +140,12 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
   report.eligibleCount = candidatePool.length;
   const candidates = candidatePool.filter(p => scored.byPlayerId.has(p.id)); report.evaluatedCount = candidates.length;
   if (candidates.length < candidatePool.length) report.warnings.push(`${candidatePool.length - candidates.length} available players lack a validated, league-scored forecast and were not ranked.`);
+  // One disclosure for the whole feed, so an incomplete return contract is visible without turning
+  // every non-DEF candidate into an individually flagged risk.
+  const rankedSpecialTeams = candidates.map(p => scoredWeek(p.id, week)?.mean.specialTeams).filter(Boolean);
+  const uncoveredSpecialTeams = [...new Set(rankedSpecialTeams.flatMap(value => value!.uncovered))];
+  const missingSpecialTeams = rankedSpecialTeams.filter(value => specialTeamsIncomplete(value!)).length;
+  if (missingSpecialTeams) report.warnings.push(`${missingSpecialTeams} of ${rankedSpecialTeams.length} ranked players have incomplete individual special-teams coverage: this forecast does not model ${uncoveredSpecialTeams.map(category => INDIVIDUAL_SPECIAL_TEAMS_STATS[category]).join(', ')}, which your league does score. Their projections omit return scoring rather than valuing it at zero, and no return-touchdown upside is added to any priority score.`);
   const active = own.filter(p => !roster.reserveIds.includes(p.id) && !roster.taxiIds.includes(p.id));
   const canPlay = (p: NflPlayer, w: number) => {
     const s = forecasts.get(p.id);
@@ -219,15 +225,29 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
     if (kicker) uncertainty.push(...kicker.missingContext);
     const defense = horizon === 'streamer' && currentWeek?.mean.defense ? defenseStreamerProfile(currentWeek.mean.defense) : undefined;
     if (defense) uncertainty.push(...defense.missingContext);
+    // A rostered player's own return scoring, with the categories this forecast leaves unknown. The
+    // gap is graded as uncertainty only where it is decision-relevant: a declared return role, or a
+    // forecast that models some return categories but not others. A league-wide absence of return
+    // modeling is disclosed once, as a report warning, so it does not re-price every candidate.
+    const specialTeams = (horizon === 'dynasty' ? scoredAdd.dynasty?.specialTeams : currentWeek?.mean.specialTeams) ?? undefined;
     const profile = scoredAdd.opportunity;
     // Touchdown dependence is a genuine source of week-to-week variance, so it grades as uncertainty.
     if (profile?.archetype === 'touchdown-dependent') uncertainty.push(`Touchdown-dependent: ${Math.round((profile.touchdownShare ?? 0) * 100)}% of the league-scored total comes from touchdowns, the least repeatable part of a projection.`);
     if (profile && profile.stability == null && profile.targets != null) uncertainty.push('No observed target series was supplied, so weekly target stability is unknown.');
     const risk = horizon === 'dynasty' || unavailable(status(add, s)) || uncertainty.length >= 3 ? 'high' : uncertainty.length || (status(add, s) ?? '').toLowerCase() === 'questionable' ? 'medium' : 'low';
+    // Disclosed after the risk grade, deliberately. An incomplete return contract is a property of
+    // the feed, not of this candidate, and grading it as candidate risk would demote exactly the
+    // return specialists the gap concerns — the mirror of the error this contract exists to prevent.
+    if (specialTeams?.coverageNote && (specialTeams.relevance === 'designated' || specialTeams.coverage === 'partial')) uncertainty.push(specialTeams.coverageNote);
     const role = positions(add).includes('K') ? { value: 0, reason: 'Kicker preferences use distance forecasts and supplied context; no receiving-role preference applies.' }
       : positions(add).includes('DEF') ? { value: 0, reason: 'Team defense preferences use the unit’s own raw categories, tier probabilities and matchup context; no receiving-role preference applies.' }
       : roleScore(profile, horizon);
-    const score = round(net + Math.max(0, starterGain ?? 0) * .6 + (need === 'bye-cover' || need === 'injury-cover' ? 2 : 0) - (risk === 'high' ? 2 : risk === 'medium' ? .75 : 0) + role.value + (kicker?.rankingAdjustment ?? 0) + (defense?.rankingAdjustment ?? 0));
+    // Unmodeled return upside is worth exactly nothing here, by construction rather than by omission:
+    // `SpecialTeamsBreakdown.rankingAdjustment` is typed as 0, so a return specialist can never be
+    // promoted over a player this league's own rules score higher on a return touchdown nobody
+    // projected. Return production that *is* modeled is already inside `projected`, scored once.
+    const returnUpside: 0 = specialTeams?.rankingAdjustment ?? 0;
+    const score = round(net + Math.max(0, starterGain ?? 0) * .6 + (need === 'bye-cover' || need === 'injury-cover' ? 2 : 0) - (risk === 'high' ? 2 : risk === 'medium' ? .75 : 0) + role.value + (kicker?.rankingAdjustment ?? 0) + (defense?.rankingAdjustment ?? 0) + returnUpside);
     if (score <= 0) continue;
     const urgency = horizon === 'streamer' || need === 'bye-cover' || need === 'injury-cover' ? 'high' : horizon === 'dynasty' ? 'low' : 'medium';
     const baseShare = Math.min(.3, .02 + Math.max(0, score) * .009 + (urgency === 'high' ? .03 : 0));
@@ -236,7 +256,8 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
     const scoringOf = horizon === 'dynasty' ? scored.byPlayerId.get(add.id)!.dynasty! : explain(add, week);
     const reasons = [
       `Your league's ${report.scoringLabel} scoring applied to the provider's raw stat forecast; ${horizon === 'streamer' ? 'current-week points' : horizon === 'dynasty' ? 'future typical-week points' : 'remaining-week average with 25% weight on the remaining playoff average'}.`,
-      `Week ${week}: ${scoringOf.explanation}.`,
+      // Position breakdowns already end their own sentence; a second period would read as a typo.
+      `Week ${week}: ${scoringOf.explanation.replace(/\.$/, '')}.`,
       comparison ? `${starterGain! >= 0 ? '+' : ''}${starterGain} points versus ${comparison.player?.fullName ?? 'an empty eligible starter slot'}.` : 'Not enough forecast coverage to compare current starters.',
       weak ? `${benchGain! >= 0 ? '+' : ''}${benchGain} points versus weakest valued bench option ${weak.fullName} for this horizon.` : 'No fully valued, droppable bench baseline.',
       s.role ? `Role share ${Math.round(s.role.previousShare * 100)}% → ${Math.round(s.role.recentShare * 100)}% over ${s.role.games} game(s); weekly forecast adjustment ${round((roleMultiplier(s) - 1) * 100)}%.` : positions(add).includes('K') ? 'Kicker workload and accuracy come from the distance forecast.' : positions(add).includes('DEF') ? 'Team defense volume comes from the unit’s own sack, takeaway and threshold forecast.' : 'Role trend is unknown.',
@@ -244,6 +265,14 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
     ];
     if (kicker) reasons.push(kicker.forecast.explanation, ...kicker.factors.map(f => `${f.label}: ${f.explanation} Ranking adjustment ${f.value >= 0 ? '+' : ''}${f.value}.`));
     if (defense) reasons.push(defense.forecast.explanation, ...defense.forecast.drivers.map(d => `${d.label}: ${d.explanation}`), ...defense.factors.map(f => `${f.label}: ${f.explanation} Ranking adjustment ${f.value >= 0 ? '+' : ''}${f.value}.`));
+    // Only where the breakdown says something about *this* player: return points it actually scored,
+    // a declared return role, or a forecast that covers some categories but not others. The blanket
+    // case — nothing modeled for anyone — is the report warning's job, not every card's.
+    if (specialTeams && (specialTeams.expectedPoints !== 0 || specialTeams.relevance === 'designated' || specialTeams.coverage === 'partial')) {
+      // The week's own sentence already carries this wherever it bears on the decision.
+      if (!scoringOf.explanation.includes(specialTeams.explanation)) reasons.push(specialTeams.explanation);
+      if (specialTeamsIncomplete(specialTeams)) reasons.push(`Return upside contributes ${returnUpside} to this priority score. Missing special-teams categories are disclosed, never estimated, so this player is ranked only on scoring your league's rules actually produced.`);
+    }
     if (quarterback) {
       reasons.push(`${horizon === 'dynasty' ? 'Future typical week' : `Week ${week}`}: ${quarterback.mean.explanation}`);
       const compared = currentStarter && scored.byPlayerId.get(currentStarter.id)?.weeks.find(w => w.week === week);
@@ -262,7 +291,7 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
       projectedPoints: round(projected),
       pointsExplanation: `${rules.scoring.describe(round(projected))}${horizon === 'streamer' ? ' this week' : horizon === 'dynasty' ? ' per future typical week' : ' per weighted remaining week'}`,
       contributions: scoringOf.contributions,
-      opportunity: profile, quarterback, kicker, defense,
+      opportunity: profile, quarterback, kicker, defense, specialTeams,
       starterGain, benchGain, starterComparison: currentStarter ? identity(currentStarter) : null, weakestBench: weak ? identity(weak) : null,
       dropCost: drop ? round(dropCost) : null,
       dropReason: drop ? `${drop.fullName} is the lowest-retention legal bench drop (${round(dropCost)} points, using the maximum of current, season${rules.format === 'dynasty' ? ' and dynasty' : ''} value).` : 'An active roster slot is open; no drop is required.',

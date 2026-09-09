@@ -3,7 +3,10 @@ import test from 'node:test';
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { EXPECTED_SCORING } from './index.js';
+import {
+  EXPECTED_SCORING, INDIVIDUAL_SPECIAL_TEAMS_KEYS, INDIVIDUAL_SPECIAL_TEAMS_STATS,
+  SPECIAL_TEAMS_CATEGORIES, TEAM_SPECIAL_TEAMS_KEYS, TEAM_SPECIAL_TEAMS_STATS,
+} from './index.js';
 import {
   LIVE_LEAGUE_SCORING_SOURCE, LIVE_SCORING_CATEGORIES, LIVE_SCORING_SETTINGS, LIVE_UNDOCUMENTED_KEYS,
   liveScoringFixture, liveScoringRulesFixture,
@@ -143,6 +146,12 @@ test('team and individual special-teams rules are never collapsed into one anoth
   // Neither side is an alias of the defensive rules that share its wording.
   assert.notEqual(LIVE_SCORING_SETTINGS.st_fum_rec, LIVE_SCORING_SETTINGS.fum_rec);
   for (const key of ['def_st_tkl_solo', 'st_tkl_solo']) assert.equal(LIVE[key], 0, key);
+  // Both forecast contracts read their Sleeper keys from the same maps, so a schema change cannot
+  // point one family's category at the other family's rule.
+  assert.deepEqual(SPECIAL_TEAMS_CATEGORIES.map(category => TEAM_SPECIAL_TEAMS_STATS[category]), [...team]);
+  assert.deepEqual(SPECIAL_TEAMS_CATEGORIES.map(category => INDIVIDUAL_SPECIAL_TEAMS_STATS[category]), [...individual]);
+  assert.equal(TEAM_SPECIAL_TEAMS_KEYS.some(key => INDIVIDUAL_SPECIAL_TEAMS_KEYS.includes(key)), false);
+  assert.deepEqual([...TEAM_SPECIAL_TEAMS_KEYS, ...INDIVIDUAL_SPECIAL_TEAMS_KEYS].filter(key => LIVE[key] === undefined), []);
 });
 
 test('decimal yardage contributions are summed before any rounding', () => {

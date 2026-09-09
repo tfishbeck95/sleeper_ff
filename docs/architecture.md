@@ -106,6 +106,22 @@ never collapse into one another. Generic role and matchup multipliers are refuse
 both positions: for a defense, a multiplier would scale a probability-weighted
 threshold bonus linearly with a matchup opinion. See [`docs/defense.md`](defense.md).
 
+A rostered player's own return scoring is the same boundary again, on the other
+side of the same rule split. `apps/api/src/special-teams.ts` validates expected
+`st_td`, `st_ff` and `st_fum_rec` counts together with an explicit declaration of
+which categories the provider models at all. The two families are refused on each
+other's entity as identity failures, and reconciled to one canonical count within an
+entity, so a return touchdown is paid to the unit, to the returner, or to both — as
+Sleeper does — but never twice to the same fantasy entity. A category the provider
+does not model is unknown rather than zero: the league's own rate is read from the
+snapshot and reported, nothing is estimated in its place, the projection is marked
+as having incomplete coverage, and the gap is named where a designated return role
+makes it decision-relevant. Return upside carries a `rankingAdjustment` typed as the
+literal `0`, so a speculative return touchdown can never lift a player above one this
+league's rules score higher — and the coverage note is recorded after a waiver
+candidate's risk grade, so an incomplete feed does not demote the return specialists
+it concerns either. See [`docs/special-teams.md`](special-teams.md).
+
 Fictional demo view models are isolated from this pipeline by naming: they carry
 `illustrativePoints`, never a projection-shaped field, and are never mixed into a
 connected league's rankings.

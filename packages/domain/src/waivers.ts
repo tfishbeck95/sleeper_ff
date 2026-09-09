@@ -14,6 +14,8 @@ export interface WaiverRecommendation {
   quarterback?: import('./projections.js').QuarterbackOutlook;
   kicker?: import('./kicker.js').KickerStreamerProfile;
   defense?: import('./defense.js').DefenseStreamerProfile;
+  /** This player's own return scoring and its coverage. Its `rankingAdjustment` is always 0. */
+  specialTeams?: import('./special-teams.js').SpecialTeamsBreakdown;
   opportunity: import('./projections.js').OpportunityProfile | null;
   starterGain: number | null; benchGain: number | null;
   starterComparison: WaiverPlayer | null; weakestBench: WaiverPlayer | null;

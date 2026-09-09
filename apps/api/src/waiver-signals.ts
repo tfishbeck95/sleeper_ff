@@ -1,6 +1,7 @@
 import { validateDefenseForecast } from './defense.js';
 import { validateKickerForecast } from './kicker.js';
-import type { DefenseForecast, KickerForecast, QuarterbackRushingSplit } from '@sleeper/domain';
+import { validateIndividualSpecialTeams } from './special-teams.js';
+import type { DefenseForecast, IndividualSpecialTeamsForecast, KickerForecast, QuarterbackRushingSplit } from '@sleeper/domain';
 import { readFile } from 'node:fs/promises';
 
 /**
@@ -35,6 +36,14 @@ export interface WeeklyForecast {
   kicker?: KickerForecast; floorKicker?: KickerForecast; ceilingKicker?: KickerForecast;
   /** Team defense/special teams raw counts and tier probabilities, one per scored scenario. */
   defense?: DefenseForecast; floorDefense?: DefenseForecast; ceilingDefense?: DefenseForecast;
+  /**
+   * A rostered player's own `st_*` counts and the provider's coverage declaration, one per scored
+   * scenario. Never a `DEF` unit's return events: those are `defense.specialTeams`, a different
+   * Sleeper rule family at a different rate, and the boundary refuses either one on the other entity.
+   */
+  specialTeams?: IndividualSpecialTeamsForecast;
+  floorSpecialTeams?: IndividualSpecialTeamsForecast;
+  ceilingSpecialTeams?: IndividualSpecialTeamsForecast;
   floorStats?: Record<string, number>; ceilingStats?: Record<string, number>;
   opponent?: string; bye?: boolean;
   /** 1 is neutral; use only for matchup effects not already in the baseline forecast. */
@@ -50,6 +59,7 @@ export interface PlayerSignal {
   dynastyStats?: Record<string, number>;
   dynastyKicker?: KickerForecast;
   dynastyDefense?: DefenseForecast;
+  dynastySpecialTeams?: IndividualSpecialTeamsForecast;
   dynastyRushingSplit?: QuarterbackRushingSplit;
   /** Trade valuation inputs supplied by the forecast source, not inferred NFL facts. */
   age?: number; expectedCareerYears?: number; uncertainty?: number; tradeEligible?: boolean;
@@ -102,9 +112,9 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
     seen.add(p.playerId);
     const weeks = new Set<number>();
     for (const w of p.weeks) {
-      if (!object(w) || !weekNumber(w.week) || weeks.has(w.week) || !stats(w.stats, w.kicker, w.defense) || (w.opponent !== undefined && typeof w.opponent !== 'string') || (w.bye !== undefined && typeof w.bye !== 'boolean') || (w.matchupMultiplier !== undefined && (!finite(w.matchupMultiplier) || w.matchupMultiplier < .5 || w.matchupMultiplier > 1.5))) throw new Error('Invalid or duplicate weekly waiver forecast.');
+      if (!object(w) || !weekNumber(w.week) || weeks.has(w.week) || !stats(w.stats, w.kicker, w.defense, w.specialTeams) || (w.opponent !== undefined && typeof w.opponent !== 'string') || (w.bye !== undefined && typeof w.bye !== 'boolean') || (w.matchupMultiplier !== undefined && (!finite(w.matchupMultiplier) || w.matchupMultiplier < .5 || w.matchupMultiplier > 1.5))) throw new Error('Invalid or duplicate weekly waiver forecast.');
       // Scenarios are raw stat lines, never a pre-scored range: they are scored by the same league rules.
-      for (const [key, ...detail] of [['floorStats', 'floorKicker', 'floorDefense'], ['ceilingStats', 'ceilingKicker', 'ceilingDefense']]) if (w[key] !== undefined && !stats(w[key], ...detail.map(d => w[d]))) throw new Error('Invalid floor or ceiling stat scenario.');
+      for (const [key, ...detail] of [['floorStats', 'floorKicker', 'floorDefense', 'floorSpecialTeams'], ['ceilingStats', 'ceilingKicker', 'ceilingDefense', 'ceilingSpecialTeams']]) if (w[key] !== undefined && !stats(w[key], ...detail.map(d => w[d]))) throw new Error('Invalid floor or ceiling stat scenario.');
       for (const [key, line] of [['kicker', 'stats'], ['floorKicker', 'floorStats'], ['ceilingKicker', 'ceilingStats']]) if (w[key] !== undefined) {
         if (w[line] === undefined) throw new Error('Kicker forecast requires its raw stat scenario.');
         validateKickerForecast(w[key]);
@@ -112,6 +122,10 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
       for (const [key, line] of [['defense', 'stats'], ['floorDefense', 'floorStats'], ['ceilingDefense', 'ceilingStats']]) if (w[key] !== undefined) {
         if (w[line] === undefined) throw new Error('Team defense forecast requires its raw stat scenario.');
         validateDefenseForecast(w[key]);
+      }
+      for (const [key, line] of [['specialTeams', 'stats'], ['floorSpecialTeams', 'floorStats'], ['ceilingSpecialTeams', 'ceilingStats']]) if (w[key] !== undefined) {
+        if (w[line] === undefined) throw new Error('Individual special-teams forecast requires its raw stat scenario.');
+        validateIndividualSpecialTeams(w[key]);
       }
       for (const [split, line] of [['rushingSplit', 'stats'], ['floorRushingSplit', 'floorStats'], ['ceilingRushingSplit', 'ceilingStats']]) {
         if (w[split] !== undefined) {
@@ -123,7 +137,7 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
       weeks.add(w.week);
     }
     if (p.recentTargets !== undefined && (!Array.isArray(p.recentTargets) || !p.recentTargets.length || p.recentTargets.length > 24 || !p.recentTargets.every(v => finite(v) && v >= 0 && v <= 30))) throw new Error('Invalid recent target series.');
-    if (p.dynastyStats !== undefined && !stats(p.dynastyStats, p.dynastyKicker, p.dynastyDefense)) throw new Error('Invalid dynasty forecast.');
+    if (p.dynastyStats !== undefined && !stats(p.dynastyStats, p.dynastyKicker, p.dynastyDefense, p.dynastySpecialTeams)) throw new Error('Invalid dynasty forecast.');
     if (p.dynastyKicker !== undefined) {
       if (p.dynastyStats === undefined) throw new Error('Dynasty kicker forecast requires dynastyStats.');
       validateKickerForecast(p.dynastyKicker);
@@ -131,6 +145,10 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
     if (p.dynastyDefense !== undefined) {
       if (p.dynastyStats === undefined) throw new Error('Dynasty team defense forecast requires dynastyStats.');
       validateDefenseForecast(p.dynastyDefense);
+    }
+    if (p.dynastySpecialTeams !== undefined) {
+      if (p.dynastyStats === undefined) throw new Error('Dynasty individual special-teams forecast requires dynastyStats.');
+      validateIndividualSpecialTeams(p.dynastySpecialTeams);
     }
     if (p.dynastyRushingSplit !== undefined) {
       const error = validateRushingSplit(p.dynastyRushingSplit, p.dynastyStats);

@@ -1,5 +1,6 @@
 import { quarterbackOutlook, quarterbackComparison, scaleQuarterback } from './quarterback.js';
-import { interpretLeagueRules, scoringFormatLabel } from '@sleeper/domain';
+import { specialTeamsCautions } from './special-teams.js';
+import { INDIVIDUAL_SPECIAL_TEAMS_STATS, interpretLeagueRules, scoringFormatLabel, specialTeamsIncomplete } from '@sleeper/domain';
 import type {
   ExplainableScore, League, LineupMatchup, LineupPlayerView, LineupReport, Matchup, NflPlayer, Roster,
   ScoredPoints, StartSitDecision, TradedDraftPick, User, WeekOutlook,
@@ -108,6 +109,11 @@ export function analyzeLineup(input: LineupInput): LineupReport {
   const evaluated = scored.players.filter(player => rosteredIds.has(player.playerId));
   const unscored = [...rosteredIds].filter(id => !scored.byPlayerId.has(id));
   if (unscored.length) report.warnings.push(`${unscored.length} rostered player(s) have no league-scored forecast and are excluded from every total: ${unscored.map(id => input.players.find(p => p.id === id)?.fullName ?? id).join(', ')}.`);
+  // Incomplete return coverage is disclosed once here rather than appended to every projection. The
+  // league's own rates are read from the snapshot; a category this forecast omits stays unknown.
+  const uncoveredSpecialTeams = [...new Set(evaluated.flatMap(player => selected(player).mean.specialTeams?.uncovered ?? []))];
+  const missingCoverage = evaluated.filter(player => specialTeamsIncomplete(selected(player).mean.specialTeams));
+  if (missingCoverage.length) report.warnings.push(`${missingCoverage.length} of ${evaluated.length} rostered player(s) have incomplete individual special-teams coverage: this forecast does not model ${uncoveredSpecialTeams.map(category => INDIVIDUAL_SPECIAL_TEAMS_STATS[category]).join(', ')}, which your league does score. Those projections omit return scoring rather than valuing it at zero, and no return-touchdown upside is added to any total or ranking on this page.`);
 
   const teamName = (value: Roster) => input.users?.find(user => user.id === value.ownerId)?.displayName ?? `Roster ${value.rosterId}`;
   const evaluation = new LeagueEvaluationService().evaluate({
@@ -161,12 +167,20 @@ export function analyzeLineup(input: LineupInput): LineupReport {
     const lessStable = gaining?.stability != null && losing?.stability != null && losing.stability - gaining.stability >= STABILITY_TOLERANCE;
     if (lessStable) cautions.push(`${challenger.name} has the less stable target share (${gaining!.stability} against ${losing!.stability}). The extra ${advantage} points come with a wider week-to-week range.`);
     if (gaining?.archetype === 'touchdown-dependent' && losing?.archetype === 'volume-driven') cautions.push(`${challenger.name} is touchdown-dependent while ${starter!.name} is volume-driven, so this swap trades a repeatable floor for a less certain outcome.`);
+    // Return duty is strategically relevant only where the forecast says a player has one. Where it
+    // does, the unmodeled categories are named on both sides, so a margin is never read as covering
+    // return scoring it does not contain — in either direction.
+    const startView = view(challenger);
+    const sitView = starter ? view(starter) : null;
+    const gainingSpecialTeams = startView.scored.specialTeams;
+    if (sitView) cautions.push(...specialTeamsCautions(startView, sitView, advantage));
+    else if (gainingSpecialTeams?.relevance === 'designated' && gainingSpecialTeams.uncovered.length) cautions.push(`${challenger.name} has a designated return role and this forecast does not model ${gainingSpecialTeams.uncovered.map(category => INDIVIDUAL_SPECIAL_TEAMS_STATS[category]).join(', ')}, so the points shown for filling this empty slot exclude return scoring.`);
     const role = gaining?.stability != null
       ? ` ${challenger.name} has a ${gaining.stability} target-stability score${gaining.targets != null ? ` on ${gaining.targets} projected targets` : ''}${losing?.stability != null ? ` against ${starter!.name}'s ${losing.stability}` : ''}.`
       : '';
     decisions.push({
-      id: `${slot.slot}:${challenger.playerId}`, slot: slot.slot, start: view(challenger),
-      sit: starter ? view(starter) : { playerId: '', name: 'Empty slot', positions: [], team: null, scored: { points: 0, explanation: `0.0 points under your league's ${report.scoringLabel} scoring`, breakdown: 'No player is assigned to this slot.', contributions: [] }, floorPoints: null, ceilingPoints: null, bye: false, injuryStatus: null, opportunity: null },
+      id: `${slot.slot}:${challenger.playerId}`, slot: slot.slot, start: startView,
+      sit: sitView ?? { playerId: '', name: 'Empty slot', positions: [], team: null, scored: { points: 0, explanation: `0.0 points under your league's ${report.scoringLabel} scoring`, breakdown: 'No player is assigned to this slot.', contributions: [] }, floorPoints: null, ceilingPoints: null, bye: false, injuryStatus: null, opportunity: null },
       advantage,
       explanation: `${challenger.name} scores ${weekPoints(rules.scoring, selected(challenger)).explanation}, ${advantage} more than ${starter ? `${starter.name}'s ${round(starterPoints)}` : 'an empty slot'} in ${slot.slot}.${role}${starter ? quarterbackComparison(challenger.name, selected(challenger), starter.name, selected(starter)) : ''}`,
       confidence: cautions.length > 1 ? 'low' : advantage >= 3 ? 'high' : 'medium',

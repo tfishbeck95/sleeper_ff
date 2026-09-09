@@ -40,6 +40,22 @@ Kicker adapters must supply six distance bands of expected attempts/makes, PAT m
 
 Team defense adapters must supply expected sacks, interceptions, forced fumbles, fumble recoveries, safeties, blocked kicks and defensive touchdowns, complete probability distributions over Sleeper's points-allowed and yards-allowed tiers, and the unit's special-teams events wherever the league scores them. Each tier enters scoring at its probability, so a threshold bonus is priced at the chance of earning it rather than granted on a favorable matchup. See [team defense contract, field mapping and streamer ranking](defense.md). Generic role/matchup multipliers do not apply to team defenses, because a multiplier would scale a probability-weighted bonus linearly with a matchup opinion.
 
+### Individual special teams
+
+Any non-`DEF` player may carry `specialTeams` on a week, on either supplied scenario, and on the dynasty
+typical week: expected `st_td`, `st_ff` and `st_fum_rec`, plus an explicit `coverage` declaration of
+which of those categories the provider models, and an optional `returnRole`. The `st_*` family pays a
+rostered returner and the `def_st_*` family pays the D/ST unit, at different rates for the same real
+event, so carrying either family on the other entity is refused as an identity failure and overlapping
+counts within one entity are reconciled to a single canonical count.
+
+A category the provider does not model is unknown, not zero. It contributes no points and no estimated
+bonus, the league's own rate for it is read from the snapshot and reported, and the projection is marked
+as having incomplete coverage. Start/sit names the gap on both sides of a comparison when a player has a
+designated return role, and a league-wide absence of return modeling is disclosed once as a report
+warning. Return upside adds exactly `0` to every ranking on the page: a return touchdown nobody projected
+is never a reason to start the lower-scoring player. See [individual special-teams contract](special-teams.md).
+
 ### Receiving opportunity
 
 Providers may attach `opportunity` to a week (projected targets, routes, targets per route run, route

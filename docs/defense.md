@@ -33,7 +33,7 @@ Key names and rates come from the selected league's own `scoring_settings` respo
 | `specialTeams.forcedFumbles` | `def_st_ff` | The unit's special teams |
 | `specialTeams.fumbleRecoveries` | `def_st_fum_rec` | The unit's special teams |
 
-`st_td`, `st_ff`, `st_fum_rec` and `st_tkl_solo` are the **individual** special-teams rules a rostered returner scores on their own stat line. They are never written by a team forecast, and supplying one inside a `DEF` stat line is refused with that explanation. This matters because the live map prices them differently: `def_st_fum_rec` is 1 and `st_fum_rec` is 2, so collapsing the two would silently double a return unit's fumble value.
+`st_td`, `st_ff`, `st_fum_rec` and `st_tkl_solo` are the **individual** special-teams rules a rostered returner scores on their own stat line, under the [individual special-teams contract](special-teams.md). They are never written by a team forecast, and supplying one inside a `DEF` stat line — or attaching an individual `specialTeams` forecast to a `DEF` entity — is refused as an identity failure. This matters because the live map prices them differently: `def_st_fum_rec` is 1 and `st_fum_rec` is 2, so collapsing the two would silently double a return unit's fumble value.
 
 ### Forced fumbles and recoveries are separate events
 
