@@ -109,3 +109,7 @@ The plan is still advice. The user must refresh availability and review the exac
 ## Verification
 
 `npm test`, `npm run typecheck`, and `npm run build` cover both workspaces. Waiver tests exercise league ownership, IR/taxi exclusion, flex/custom scoring, injuries/byes, opponent/role/playoff adjustments, missing/stale sources, protected dynasty drops, position caps, FAAB limits, endpoint membership and errors, intersecting filters, duplicate/fallback claims and cumulative plan budgets.
+
+## Kicker streamers
+
+See [kicker forecasts and streaming](kickers.md) for the required distance/PAT contract, aggregate versus category miss reconciliation, live scoring, expected miss downside and disclosed workload/context ranking preferences.

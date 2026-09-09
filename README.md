@@ -28,6 +28,8 @@ Forecast providers supply raw projected statistics, plus optional floor and ceil
 
 The Waivers section ranks add/drop pairs by horizon, risk and roster need and builds a copyable priority plan. Claims must be submitted manually in Sleeper. Live rankings require a validated complete Sleeper scoring snapshot and a trusted forecast JSON source configured via `WAIVER_SIGNALS_PATH`; absent or stale forecasts produce an explicit unavailable state. See [waiver pipeline and feed setup](docs/waivers.md) for the contract, scoring assumptions and limitations. Demo scoring is a partial reference and cannot enable actionable rankings.
 
+Kicker streamers require attempts and expected makes in all six distance categories, PATs and validated miss semantics. Their recommendations show expected points, miss downside and workload/context ranking factors. See [kicker adapter and scoring contract](docs/kickers.md).
+
 ## Trade planning
 
 The Trades section evaluates every roster and proposes offers only when both managers gain value addressing a need and retain legal lineups within configurable fairness and risk bounds. Redraft and dynasty have separate valuation, with dynasty age, career horizons, rookie capital and contender/rebuilder strategy. Review both teams’ values and lineups, risks and cheaper alternatives, then edit and copy a message. No offers or messages are sent. Live analysis uses the same forecast source with additional dynasty fields; see [trade engine and configuration](docs/trades.md).

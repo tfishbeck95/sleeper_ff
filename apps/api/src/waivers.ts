@@ -1,3 +1,4 @@
+import { kickerStreamerProfile } from './kicker.js';
 import { quarterbackOutlook, quarterbackComparison } from './quarterback.js';
 import { interpretLeagueRules, scoringFormatLabel, type League, type NflPlayer, type OpportunityProfile, type Roster, type ScoringContribution, type WaiverHorizon, type WaiverNeed, type WaiverPlayer, type WaiverRecommendation, type WaiverReport } from '@sleeper/domain';
 import { roleMultiplier, scoreLeagueForecasts, WAIVER_UNAVAILABLE_STATUSES, weekPoints, type ScoredForecasts } from './projection-scoring.js';
@@ -203,7 +204,7 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
     if (status(add, s) && !['active', 'healthy'].includes((status(add, s) ?? '').toLowerCase())) uncertainty.push(`Availability: ${status(add, s)}. Future recovery is uncertain.`);
     if (!s.weeks.find(w => w.week === week)?.opponent && !s.weeks.find(w => w.week === week)?.bye) uncertainty.push('Upcoming opponent is unknown; no matchup advantage assumed.');
     if (s.weeks.some(w => remainingWeeks.includes(w.week) && w.bye === undefined)) uncertainty.push('Some bye designations are missing; verify the schedule.');
-    if (s.weeks.some(w => remainingWeeks.includes(w.week) && !w.bye && w.matchupMultiplier === undefined)) uncertainty.push('Some opponent strength estimates are missing; neutral matchup weights used.');
+    if (!positions(add).includes('K') && s.weeks.some(w => remainingWeeks.includes(w.week) && !w.bye && w.matchupMultiplier === undefined)) uncertainty.push('Some opponent strength estimates are missing; neutral matchup weights used.');
     if (value(add, 'rest-of-season') === null) uncertainty.push('Rest-of-season projection coverage is incomplete.');
     if (!comparison) uncertainty.push('Starter comparison is incomplete; unknown starter values are not treated as zero.');
     if (horizon === 'dynasty') uncertainty.push('Future-week stat forecasts carry substantial development and role uncertainty.');
@@ -213,13 +214,15 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
     const quarterback = horizon === 'dynasty'
       ? scoredAdd.dynasty?.quarterback ? { mean: scoredAdd.dynasty.quarterback, floor: null, ceiling: null, adjustments: [] } : undefined
       : currentWeek ? quarterbackOutlook(currentWeek) : undefined;
+    const kicker = horizon === 'streamer' && currentWeek?.mean.kicker ? kickerStreamerProfile(currentWeek.mean.kicker) : undefined;
+    if (kicker) uncertainty.push(...kicker.missingContext);
     const profile = scoredAdd.opportunity;
     // Touchdown dependence is a genuine source of week-to-week variance, so it grades as uncertainty.
     if (profile?.archetype === 'touchdown-dependent') uncertainty.push(`Touchdown-dependent: ${Math.round((profile.touchdownShare ?? 0) * 100)}% of the league-scored total comes from touchdowns, the least repeatable part of a projection.`);
     if (profile && profile.stability == null && profile.targets != null) uncertainty.push('No observed target series was supplied, so weekly target stability is unknown.');
     const risk = horizon === 'dynasty' || unavailable(status(add, s)) || uncertainty.length >= 3 ? 'high' : uncertainty.length || (status(add, s) ?? '').toLowerCase() === 'questionable' ? 'medium' : 'low';
-    const role = roleScore(profile, horizon);
-    const score = round(net + Math.max(0, starterGain ?? 0) * .6 + (need === 'bye-cover' || need === 'injury-cover' ? 2 : 0) - (risk === 'high' ? 2 : risk === 'medium' ? .75 : 0) + role.value);
+    const role = positions(add).includes('K') ? { value: 0, reason: 'Kicker preferences use distance forecasts and supplied context; no receiving-role preference applies.' } : roleScore(profile, horizon);
+    const score = round(net + Math.max(0, starterGain ?? 0) * .6 + (need === 'bye-cover' || need === 'injury-cover' ? 2 : 0) - (risk === 'high' ? 2 : risk === 'medium' ? .75 : 0) + role.value + (kicker?.rankingAdjustment ?? 0));
     if (score <= 0) continue;
     const urgency = horizon === 'streamer' || need === 'bye-cover' || need === 'injury-cover' ? 'high' : horizon === 'dynasty' ? 'low' : 'medium';
     const baseShare = Math.min(.3, .02 + Math.max(0, score) * .009 + (urgency === 'high' ? .03 : 0));
@@ -231,9 +234,10 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
       `Week ${week}: ${scoringOf.explanation}.`,
       comparison ? `${starterGain! >= 0 ? '+' : ''}${starterGain} points versus ${comparison.player?.fullName ?? 'an empty eligible starter slot'}.` : 'Not enough forecast coverage to compare current starters.',
       weak ? `${benchGain! >= 0 ? '+' : ''}${benchGain} points versus weakest valued bench option ${weak.fullName} for this horizon.` : 'No fully valued, droppable bench baseline.',
-      s.role ? `Role share ${Math.round(s.role.previousShare * 100)}% → ${Math.round(s.role.recentShare * 100)}% over ${s.role.games} game(s); weekly forecast adjustment ${round((roleMultiplier(s) - 1) * 100)}%.` : 'Role trend is unknown.',
+      s.role ? `Role share ${Math.round(s.role.previousShare * 100)}% → ${Math.round(s.role.recentShare * 100)}% over ${s.role.games} game(s); weekly forecast adjustment ${round((roleMultiplier(s) - 1) * 100)}%.` : positions(add).includes('K') ? 'Kicker workload and accuracy come from the distance forecast.' : 'Role trend is unknown.',
       role.reason,
     ];
+    if (kicker) reasons.push(kicker.forecast.explanation, ...kicker.factors.map(f => `${f.label}: ${f.explanation} Ranking adjustment ${f.value >= 0 ? '+' : ''}${f.value}.`));
     if (quarterback) {
       reasons.push(`${horizon === 'dynasty' ? 'Future typical week' : `Week ${week}`}: ${quarterback.mean.explanation}`);
       const compared = currentStarter && scored.byPlayerId.get(currentStarter.id)?.weeks.find(w => w.week === week);
@@ -252,7 +256,7 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
       projectedPoints: round(projected),
       pointsExplanation: `${rules.scoring.describe(round(projected))}${horizon === 'streamer' ? ' this week' : horizon === 'dynasty' ? ' per future typical week' : ' per weighted remaining week'}`,
       contributions: scoringOf.contributions,
-      opportunity: profile, quarterback,
+      opportunity: profile, quarterback, kicker,
       starterGain, benchGain, starterComparison: currentStarter ? identity(currentStarter) : null, weakestBench: weak ? identity(weak) : null,
       dropCost: drop ? round(dropCost) : null,
       dropReason: drop ? `${drop.fullName} is the lowest-retention legal bench drop (${round(dropCost)} points, using the maximum of current, season${rules.format === 'dynasty' ? ' and dynasty' : ''} value).` : 'An active roster slot is open; no drop is required.',

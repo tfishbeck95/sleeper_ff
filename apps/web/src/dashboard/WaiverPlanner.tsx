@@ -1,3 +1,4 @@
+import { KickerDetail } from './KickerDetail';
 import { QuarterbackDetail } from './QuarterbackDetail';
 import { ScoringStatus } from './ScoringStatus';
 import { ScoringBreakdown } from './ScoringBreakdown';
@@ -52,6 +53,7 @@ export function WaiverPlanner({ leagueId, userId, week, demo, force = false }: {
           <p className="waiver-need">{needLabels[r.need]} · {r.pointsExplanation}</p>
           <ScoringBreakdown contributions={r.contributions} label={report.scoringLabel} context={r.horizon === 'dynasty' ? 'the projected future typical week' : `the week ${report.week} stat line`}/>
           <QuarterbackDetail outlook={r.quarterback} context={r.horizon === 'dynasty' ? 'Future typical week' : `Week ${report.week}`}/>
+          <KickerDetail profile={r.kicker} context={`Week ${report.week}`}/>
           <OpportunityDetail profile={r.opportunity}/>
           <dl className="waiver-comparisons"><div><dt>vs. eligible starter{r.starterComparison ? ` · ${r.starterComparison.name}` : ''}</dt><dd>{delta(r.starterGain)}</dd></div><div><dt>vs. weakest valued bench{r.weakestBench ? ` · ${r.weakestBench.name}` : ''}</dt><dd>{delta(r.benchGain)}</dd></div></dl>
           <p className="waiver-drop-reason">{r.dropReason}</p>

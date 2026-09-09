@@ -1,3 +1,4 @@
+import { normalizeKickerStats, scoreKicker, unavailableKicker } from './kicker.js';
 import { scoreQuarterback, scaleQuarterback } from './quarterback.js';
 import { validateRushingSplit } from './waiver-signals.js';
 import type {
@@ -73,7 +74,8 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
   const scored: ScoredPlayer[] = [];
   const seen = new Set<string>();
 
-  for (const signal of signals.players) {
+  for (const sourceSignal of signals.players) {
+    let signal = sourceSignal;
     const refuse = (kind: ForecastRejectionKind, message: string) => { rejected.push({ playerId: signal.playerId, kind, message }); return null; };
     const player = directory.get(signal.playerId);
     // 1. Player identity. An unverifiable subject makes its points meaningless, however well formed.
@@ -83,6 +85,23 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
     const positions = positionsOf(player);
     if (!positions.length) { refuse('identity', `${player.fullName || signal.playerId}: no fantasy position is known, so lineup eligibility cannot be validated.`); continue; }
     if (!player.fullName.trim()) { refuse('identity', `${signal.playerId}: the synchronized player record has no name.`); continue; }
+
+    // Kicker adapters must provide complete distance/PAT counts for every scored scenario.
+    // Normalize a copy: provider totals and distance aliases describe the same kicks.
+    if (positions.includes('K')) {
+      try {
+        if (signal.role || signal.weeks.some(w => w.matchupMultiplier !== undefined && w.matchupMultiplier !== 1)) throw new Error('Kicker role/matchup multipliers are unsupported; supply contextual attempts/makes or kicker context.');
+        signal = { ...signal, weeks: signal.weeks.map(w => {
+          if ((w.floorKicker && !w.floorStats) || (w.ceilingKicker && !w.ceilingStats)) throw new Error('Kicker scenario metadata requires its raw stat line.');
+          return { ...w, stats: normalizeKickerStats(rules, w.stats, w.kicker),
+            floorStats: w.floorStats ? normalizeKickerStats(rules, w.floorStats, w.floorKicker) : undefined,
+            ceilingStats: w.ceilingStats ? normalizeKickerStats(rules, w.ceilingStats, w.ceilingKicker) : undefined };
+        }), dynastyStats: signal.dynastyStats ? normalizeKickerStats(rules, signal.dynastyStats, signal.dynastyKicker) : undefined };
+        if (signal.dynastyKicker && !signal.dynastyStats) throw new Error('Dynasty kicker forecast requires dynastyStats.');
+      } catch (error) {
+        refuse('units', `${player.fullName}: ${error instanceof Error ? error.message : 'Invalid kicker forecast.'}`); continue;
+      }
+    }
 
     // 2. Raw-stat units. Every supplied key must be a statistic this league's own rules define.
     const lines: Array<[string, Record<string, number> | undefined]> = [
@@ -120,7 +139,7 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
     const status = signal.injuryStatus ?? player.injuryStatus ?? player.status;
     const weeks: ScoredWeek[] = [];
     for (const forecast of [...signal.weeks].sort((a, b) => a.week - b.week)) {
-      const week = scoreWeek(rules, signal, forecast, { role, status, absent, availability, quarterback: positions.includes('QB') });
+      const week = scoreWeek(rules, signal, forecast, { role, status, absent, availability, quarterback: positions.includes('QB'), kicker: positions.includes('K') });
       // An inconsistent optional scenario is discarded and reported. It never silently widens a range,
       // and it never invalidates the mean, whose units and identity did validate.
       if (week.floor && week.floor.points > week.mean.points + 1e-9) {
@@ -137,7 +156,7 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
     // 5. Receiving role, derived from the supplied workload and the points the league already
     //    produced. The one projection it may change is a supplied floor scenario, bounded.
     const analyzed = weeks.find(week => week.week === (availability.selectedWeek ?? weeks[0]?.week)) ?? weeks[0];
-    const profile = analyzed && !positions.includes('QB') ? opportunityProfile({
+    const profile = analyzed && !positions.includes('QB') && !positions.includes('K') ? opportunityProfile({
       positions, signal, scored: analyzed.mean, weeks: weeks.map(week => week.opportunity).filter((v): v is WeekOpportunity => Boolean(v)),
       receptionPoints: rules.receptionPoints, scoringLabel: rules.label,
     }) : null;
@@ -146,7 +165,7 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
     scored.push({
       playerId: signal.playerId, name: player.fullName, positions, team: player.team,
       injuryStatus: status ?? null, age: signal.age ?? null, weeks,
-      dynasty: signal.dynastyStats ? (positions.includes('QB') ? scoreQuarterback(rules, signal.dynastyStats, signal.dynastyRushingSplit) : rules.score(signal.dynastyStats)) : null,
+      dynasty: signal.dynastyStats ? (positions.includes('K') ? scoreKicker(rules, signal.dynastyStats, signal.dynastyKicker!) : positions.includes('QB') ? scoreQuarterback(rules, signal.dynastyStats, signal.dynastyRushingSplit) : rules.score(signal.dynastyStats)) : null,
       opportunity: profile,
       scoringSnapshotId: rules.snapshotId, forecastUpdatedAt: signals.updatedAt,
       signal, player,
@@ -161,12 +180,12 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
 
 function scoreWeek(
   rules: ScoringRules, signal: PlayerSignal, forecast: WeeklyForecast,
-  context: { quarterback: boolean; role: number; status?: string | null; absent(status?: string | null): boolean; availability: AvailabilityPolicy },
+  context: { kicker: boolean; quarterback: boolean; role: number; status?: string | null; absent(status?: string | null): boolean; availability: AvailabilityPolicy },
 ): ScoredWeek {
-  const score = (stats: Record<string, number>, split?: WeeklyForecast['rushingSplit']) => context.quarterback ? scoreQuarterback(rules, stats, split) : rules.score(stats);
-  const mean = score(forecast.stats, forecast.rushingSplit);
-  const floor = forecast.floorStats ? score(forecast.floorStats, forecast.floorRushingSplit) : null;
-  const ceiling = forecast.ceilingStats ? score(forecast.ceilingStats, forecast.ceilingRushingSplit) : null;
+  const score = (stats: Record<string, number>, split?: WeeklyForecast['rushingSplit'], kicker?: WeeklyForecast['kicker']) => context.kicker ? scoreKicker(rules, stats, kicker!) : context.quarterback ? scoreQuarterback(rules, stats, split) : rules.score(stats);
+  const mean = score(forecast.stats, forecast.rushingSplit, forecast.kicker);
+  const floor = forecast.floorStats ? score(forecast.floorStats, forecast.floorRushingSplit, forecast.floorKicker) : null;
+  const ceiling = forecast.ceilingStats ? score(forecast.ceilingStats, forecast.ceilingRushingSplit, forecast.ceilingKicker) : null;
   const bye = forecast.bye === true;
   const dated = signal.unavailableThroughWeek != null && forecast.week <= signal.unavailableThroughWeek;
   const designated = context.absent(context.status);
@@ -219,6 +238,7 @@ export function weekPoints(rules: ScoringRules, week: ScoredWeek): ScoredPoints 
   return {
     points,
     quarterback,
+    kicker: week.mean.kicker ? unavailableKicker(week.mean.kicker, week.adjustments.join(' ')) : undefined,
     explanation: `${rules.describe(points)}${quarterback ? `. ${quarterback.explanation}` : ''}${week.adjustments.length ? ` (${week.adjustments.join(' ')})` : ''}`,
     breakdown: week.multiplier === 0 ? `${week.mean.breakdown} — zeroed: ${week.adjustments.join(' ')}` : `${week.mean.breakdown}; adjusted by ${Math.round(week.multiplier * 1000) / 1000}`,
     contributions: week.mean.contributions.map(value => ({ ...value, points: value.points * week.multiplier })),

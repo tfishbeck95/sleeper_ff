@@ -32,6 +32,10 @@ Refusal reasons, all reported per projection with the player named:
 | `coverage` | A week the caller requires has no forecast, or no explicit `bye` flag. |
 | `scenario` | A floor scoring above, or a ceiling scoring below, the mean. Only that scenario is discarded; the validated mean survives. |
 
+### Kickers
+
+Kicker adapters must supply six distance bands of expected attempts/makes, PAT makes/misses and explicit Sleeper miss semantics for every scored scenario. Counts are normalized before this boundary applies the live scoring map. See [kicker contract, miss validation and streamer ranking](kickers.md). Generic role/matchup multipliers do not apply to kickers.
+
 ### Receiving opportunity
 
 Providers may attach `opportunity` to a week (projected targets, routes, targets per route run, route

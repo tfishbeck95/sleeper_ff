@@ -39,6 +39,7 @@ export function buildWaiverPlan(report: WaiverReport, rows: WaiverRecommendation
     count += 1;
     if (!firstPriority) groups.set(group, count);
     lines.push(`${count}. ADD ${r.add.name} (${r.add.positions.join('/')}) → ${r.drop ? `DROP ${r.drop.name}` : 'use open active slot'}.${bid} ${horizonLabels[r.horizon]}; ${needLabels[r.need]}; ${r.risk} risk.${firstPriority ? ` Fallback to #${firstPriority}: only if that add and earlier alternatives using this drop/slot fail.` : ''}`);
+    if (r.kicker) lines.push(`   ${r.kicker.forecast.explanation}`);
     if (r.faab) lines.push(`   ${r.faab.explanation}`);
   }
   if (!count) lines.push('No selected claims fit the available evidence and budget.');

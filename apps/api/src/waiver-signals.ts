@@ -1,4 +1,5 @@
-import type { QuarterbackRushingSplit } from '@sleeper/domain';
+import { validateKickerForecast } from './kicker.js';
+import type { KickerForecast, QuarterbackRushingSplit } from '@sleeper/domain';
 import { readFile } from 'node:fs/promises';
 
 /**
@@ -30,6 +31,7 @@ export interface WeeklyOpportunity {
 }
 export interface WeeklyForecast {
   week: number; stats: Record<string, number>;
+  kicker?: KickerForecast; floorKicker?: KickerForecast; ceilingKicker?: KickerForecast;
   floorStats?: Record<string, number>; ceilingStats?: Record<string, number>;
   opponent?: string; bye?: boolean;
   /** 1 is neutral; use only for matchup effects not already in the baseline forecast. */
@@ -43,6 +45,7 @@ export interface PlayerSignal {
   playerId: string; weeks: WeeklyForecast[];
   /** Expected stat line in a future typical week, for dynasty retention value. */
   dynastyStats?: Record<string, number>;
+  dynastyKicker?: KickerForecast;
   dynastyRushingSplit?: QuarterbackRushingSplit;
   /** Trade valuation inputs supplied by the forecast source, not inferred NFL facts. */
   age?: number; expectedCareerYears?: number; uncertainty?: number; tradeEligible?: boolean;
@@ -75,7 +78,7 @@ export interface WaiverSignalProvider { load(season: string, week: number): Prom
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const weekNumber = (v: unknown): v is number => finite(v) && Number.isInteger(v) && v >= 1 && v <= 18;
-const stats = (v: unknown) => object(v) && Object.keys(v).length > 0 && Object.values(v).every(finite);
+const stats = (v: unknown, kicker?: unknown) => object(v) && (Object.keys(v).length > 0 || kicker !== undefined) && Object.values(v).every(finite);
 const ids = (v: unknown) => Array.isArray(v) && v.every(id => typeof id === 'string');
 const fraction = (v: unknown) => finite(v) && v >= 0 && v <= 1;
 /** Opportunity is workload, never points: rates stay fractions and counts stay plausible per week. */
@@ -94,9 +97,13 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
     seen.add(p.playerId);
     const weeks = new Set<number>();
     for (const w of p.weeks) {
-      if (!object(w) || !weekNumber(w.week) || weeks.has(w.week) || !stats(w.stats) || (w.opponent !== undefined && typeof w.opponent !== 'string') || (w.bye !== undefined && typeof w.bye !== 'boolean') || (w.matchupMultiplier !== undefined && (!finite(w.matchupMultiplier) || w.matchupMultiplier < .5 || w.matchupMultiplier > 1.5))) throw new Error('Invalid or duplicate weekly waiver forecast.');
+      if (!object(w) || !weekNumber(w.week) || weeks.has(w.week) || !stats(w.stats, w.kicker) || (w.opponent !== undefined && typeof w.opponent !== 'string') || (w.bye !== undefined && typeof w.bye !== 'boolean') || (w.matchupMultiplier !== undefined && (!finite(w.matchupMultiplier) || w.matchupMultiplier < .5 || w.matchupMultiplier > 1.5))) throw new Error('Invalid or duplicate weekly waiver forecast.');
       // Scenarios are raw stat lines, never a pre-scored range: they are scored by the same league rules.
-      for (const key of ['floorStats', 'ceilingStats']) if (w[key] !== undefined && !stats(w[key])) throw new Error('Invalid floor or ceiling stat scenario.');
+      for (const [key, detail] of [['floorStats', 'floorKicker'], ['ceilingStats', 'ceilingKicker']]) if (w[key] !== undefined && !stats(w[key], w[detail])) throw new Error('Invalid floor or ceiling stat scenario.');
+      for (const [key, line] of [['kicker', 'stats'], ['floorKicker', 'floorStats'], ['ceilingKicker', 'ceilingStats']]) if (w[key] !== undefined) {
+        if (w[line] === undefined) throw new Error('Kicker forecast requires its raw stat scenario.');
+        validateKickerForecast(w[key]);
+      }
       for (const [split, line] of [['rushingSplit', 'stats'], ['floorRushingSplit', 'floorStats'], ['ceilingRushingSplit', 'ceilingStats']]) {
         if (w[split] !== undefined) {
           const error = validateRushingSplit(w[split], w[line]);
@@ -107,7 +114,11 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
       weeks.add(w.week);
     }
     if (p.recentTargets !== undefined && (!Array.isArray(p.recentTargets) || !p.recentTargets.length || p.recentTargets.length > 24 || !p.recentTargets.every(v => finite(v) && v >= 0 && v <= 30))) throw new Error('Invalid recent target series.');
-    if (p.dynastyStats !== undefined && !stats(p.dynastyStats)) throw new Error('Invalid dynasty forecast.');
+    if (p.dynastyStats !== undefined && !stats(p.dynastyStats, p.dynastyKicker)) throw new Error('Invalid dynasty forecast.');
+    if (p.dynastyKicker !== undefined) {
+      if (p.dynastyStats === undefined) throw new Error('Dynasty kicker forecast requires dynastyStats.');
+      validateKickerForecast(p.dynastyKicker);
+    }
     if (p.dynastyRushingSplit !== undefined) {
       const error = validateRushingSplit(p.dynastyRushingSplit, p.dynastyStats);
       if (error) throw new Error(error);
