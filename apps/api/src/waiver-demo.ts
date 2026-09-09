@@ -31,7 +31,7 @@ export function demoWaiverInput(now = new Date()): WaiverInput {
   const series = (shape: number[], id: string, position: string, weekly: number) => shape.map(factor => Math.round(factor * (opportunity(id, position, weekly)?.targets ?? 0)));
   const steady = [1, .9, 1.1, 1, 1, .9], climbing = [.3, .5, .7, 1.2, 1.4, 1.5], erratic = [.15, 1.8, .3, 1.7, .4, 1.6];
   const signals: PlayerSignal[] = entries.map(([playerId, , position, weekly, future]) => ({ playerId,
-    weeks: Array.from({ length: 10 }, (_, i) => ({ week: i + 8, stats: line(playerId, position, weekly), floorStats: line(playerId, position, weekly * .7), ceilingStats: line(playerId, position, weekly * 1.35), opponent: ['SAMPLE A', 'SAMPLE B', 'SAMPLE C'][i % 3], bye: playerId === 'starter-te' && i === 0, matchupMultiplier: i > 7 ? 1.1 : 1, opportunity: opportunity(playerId, position, weekly) })),
+    weeks: Array.from({ length: 10 }, (_, i) => ({ week: i + 8, stats: line(playerId, position, weekly), floorStats: line(playerId, position, weekly * .7), ceilingStats: line(playerId, position, weekly * 1.35), opponent: ['SAMPLE A', 'SAMPLE B', 'SAMPLE C'][i % 3], bye: playerId === 'starter-te' && i === 0, opportunity: opportunity(playerId, position, weekly) })),
     dynastyStats: { rush_yd: future * 10 }, role: { previousShare: .4, recentShare: playerId === 'add-rb' ? .65 : .4, games: 4 },
     recentTargets: position === 'RB' && playerId !== 'stash' ? undefined : series(playerId === 'add-wr' ? climbing : playerId === 'add-te' ? erratic : steady, playerId, position, weekly),
   }));

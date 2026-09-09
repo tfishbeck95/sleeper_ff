@@ -5,7 +5,8 @@ import type { DefenseForecast, IndividualSpecialTeamsForecast, KickerForecast, Q
 import { readFile } from 'node:fs/promises';
 
 /**
- * Raw baseline stat forecasts: the pipeline applies league scoring, role and matchup adjustments.
+ * Raw baseline stat forecasts. Any trend heuristic must change named raw statistics before the
+ * pipeline applies league scoring; labels and generic point multipliers are not forecast inputs.
  * A provider never supplies fantasy points. `stats` is the mean scenario; `floorStats`/`ceilingStats`
  * are optional low/high raw-stat scenarios scored by exactly the same league rules.
  */
@@ -46,12 +47,29 @@ export interface WeeklyForecast {
   ceilingSpecialTeams?: IndividualSpecialTeamsForecast;
   floorStats?: Record<string, number>; ceilingStats?: Record<string, number>;
   opponent?: string; bye?: boolean;
-  /** 1 is neutral; use only for matchup effects not already in the baseline forecast. */
+  /** @deprecated Rejected when non-neutral. Supply `forecastAdjustments` as raw-stat changes. */
   matchupMultiplier?: number;
+  /** Bounded, auditable changes made to the baseline raw-stat forecast before league scoring. */
+  forecastAdjustments?: ForecastAdjustment[];
   opportunity?: WeeklyOpportunity;
   rushingSplit?: QuarterbackRushingSplit;
   floorRushingSplit?: QuarterbackRushingSplit;
   ceilingRushingSplit?: QuarterbackRushingSplit;
+}
+export type ForecastTrendInput = 'targetShare' | 'routeParticipation' | 'carryShare' | 'goalLineUsage' | 'snapRate' | 'quarterbackChange' | 'injuryWorkloadChange';
+export interface ForecastAdjustment {
+  /** Stable within this week's forecast; prevents the same trend from being applied twice. */
+  trendId: string;
+  label: string;
+  input: ForecastTrendInput;
+  /** Human-readable measured before/after values, source, or quarterback change. */
+  evidence: string;
+  /** True when `stats` already reflects this trend. Such records are disclosure-only. */
+  baselineIncorporates: boolean;
+  /** Additive changes in raw-stat units, never fantasy points. Empty when already incorporated. */
+  statChanges: Record<string, number>;
+  /** Absolute per-stat cap in raw-stat units. */
+  maxAbsoluteStatChange: number;
 }
 export interface PlayerSignal {
   playerId: string; weeks: WeeklyForecast[];
@@ -104,6 +122,20 @@ function opportunity(value: unknown): void {
   for (const key of ['targetsPerRouteRun', 'routeParticipation', 'targetShare']) if (value[key] !== undefined && !fraction(value[key])) throw new Error(`Invalid ${key}: expected a fraction from 0 to 1.`);
   if (finite(value.routes) && value.routes > 0 && value.targets > value.routes) throw new Error('Projected targets cannot exceed projected routes.');
 }
+const TREND_INPUTS: ForecastTrendInput[] = ['targetShare', 'routeParticipation', 'carryShare', 'goalLineUsage', 'snapRate', 'quarterbackChange', 'injuryWorkloadChange'];
+function forecastAdjustments(value: unknown): void {
+  if (!Array.isArray(value)) throw new Error('Invalid forecast adjustments.');
+  const ids = new Set<string>();
+  for (const adjustment of value) {
+    if (!object(adjustment) || typeof adjustment.trendId !== 'string' || !adjustment.trendId.trim() || ids.has(adjustment.trendId)
+      || typeof adjustment.label !== 'string' || !adjustment.label.trim() || !TREND_INPUTS.includes(adjustment.input as ForecastTrendInput)
+      || typeof adjustment.evidence !== 'string' || !adjustment.evidence.trim() || typeof adjustment.baselineIncorporates !== 'boolean'
+      || !object(adjustment.statChanges) || !finite(adjustment.maxAbsoluteStatChange) || adjustment.maxAbsoluteStatChange <= 0
+      || Object.values(adjustment.statChanges).some(change => !finite(change) || Math.abs(change) > (adjustment.maxAbsoluteStatChange as number))) throw new Error('Invalid, unbounded or duplicate forecast adjustment.');
+    if (adjustment.baselineIncorporates !== (Object.keys(adjustment.statChanges).length === 0)) throw new Error('An incorporated trend must be disclosure-only; an unapplied trend must change at least one raw statistic.');
+    ids.add(adjustment.trendId);
+  }
+}
 export function parseWaiverSignals(value: unknown): WaiverSignals {
   if (!object(value) || typeof value.season !== 'string' || !/^\d{4}$/.test(value.season) || !weekNumber(value.week) || typeof value.source !== 'string' || !value.source.trim() || typeof value.updatedAt !== 'string' || !Number.isFinite(Date.parse(value.updatedAt)) || !Array.isArray(value.players)) throw new Error('Invalid waiver signal metadata.');
   const seen = new Set<string>();
@@ -112,7 +144,7 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
     seen.add(p.playerId);
     const weeks = new Set<number>();
     for (const w of p.weeks) {
-      if (!object(w) || !weekNumber(w.week) || weeks.has(w.week) || !stats(w.stats, w.kicker, w.defense, w.specialTeams) || (w.opponent !== undefined && typeof w.opponent !== 'string') || (w.bye !== undefined && typeof w.bye !== 'boolean') || (w.matchupMultiplier !== undefined && (!finite(w.matchupMultiplier) || w.matchupMultiplier < .5 || w.matchupMultiplier > 1.5))) throw new Error('Invalid or duplicate weekly waiver forecast.');
+      if (!object(w) || !weekNumber(w.week) || weeks.has(w.week) || !stats(w.stats, w.kicker, w.defense, w.specialTeams) || (w.opponent !== undefined && typeof w.opponent !== 'string') || (w.bye !== undefined && typeof w.bye !== 'boolean') || (w.matchupMultiplier !== undefined && w.matchupMultiplier !== 1)) throw new Error('Invalid or duplicate weekly waiver forecast; generic fantasy-point multipliers are prohibited.');
       // Scenarios are raw stat lines, never a pre-scored range: they are scored by the same league rules.
       for (const [key, ...detail] of [['floorStats', 'floorKicker', 'floorDefense', 'floorSpecialTeams'], ['ceilingStats', 'ceilingKicker', 'ceilingDefense', 'ceilingSpecialTeams']]) if (w[key] !== undefined && !stats(w[key], ...detail.map(d => w[d]))) throw new Error('Invalid floor or ceiling stat scenario.');
       for (const [key, line] of [['kicker', 'stats'], ['floorKicker', 'floorStats'], ['ceilingKicker', 'ceilingStats']]) if (w[key] !== undefined) {
@@ -134,6 +166,7 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
         }
       }
       if (w.opportunity !== undefined) opportunity(w.opportunity);
+      if (w.forecastAdjustments !== undefined) forecastAdjustments(w.forecastAdjustments);
       weeks.add(w.week);
     }
     if (p.recentTargets !== undefined && (!Array.isArray(p.recentTargets) || !p.recentTargets.length || p.recentTargets.length > 24 || !p.recentTargets.every(v => finite(v) && v >= 0 && v <= 30))) throw new Error('Invalid recent target series.');

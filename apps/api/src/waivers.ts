@@ -2,7 +2,7 @@ import { defenseStreamerProfile } from './defense.js';
 import { kickerStreamerProfile } from './kicker.js';
 import { quarterbackOutlook, quarterbackComparison } from './quarterback.js';
 import { INDIVIDUAL_SPECIAL_TEAMS_STATS, interpretLeagueRules, scoringFormatLabel, specialTeamsIncomplete, type League, type NflPlayer, type OpportunityProfile, type Roster, type ScoringContribution, type WaiverHorizon, type WaiverNeed, type WaiverPlayer, type WaiverRecommendation, type WaiverReport } from '@sleeper/domain';
-import { roleMultiplier, scoreLeagueForecasts, WAIVER_UNAVAILABLE_STATUSES, weekPoints, type ScoredForecasts } from './projection-scoring.js';
+import { scoreLeagueForecasts, WAIVER_UNAVAILABLE_STATUSES, weekPoints, type ScoredForecasts } from './projection-scoring.js';
 import type { PlayerSignal, WaiverSignals } from './waiver-signals.js';
 
 export interface WaiverInput {
@@ -16,28 +16,13 @@ const allIds = (roster: Roster) => [...new Set([...roster.playerIds, ...roster.s
 const positions = (p: NflPlayer) => p.fantasyPositions.length ? p.fantasyPositions : p.position ? [p.position] : [];
 const identity = (p: NflPlayer): WaiverPlayer => ({ id: p.id, name: p.fullName, positions: positions(p), team: p.team });
 
-/** The most a receiving-role signal may move a waiver ranking score, in either direction. */
-export const MAX_ROLE_SCORE = 1.5;
 /**
- * A bounded, horizon-appropriate preference over receiving role. It moves the *ranking score* only:
- * projected points stay exactly what this league's rules produced, so a reception is never paid for
- * twice. Season-long adds prefer a target share that already holds steady; streamers prefer the
- * player whose targets are climbing, because that is where a breakout comes from.
+ * Opportunity remains useful disclosure, but never creates synthetic ranking points. A measurable
+ * trend that should change a rank must first change named raw forecast stats at the scoring boundary.
  */
-export function roleScore(profile: OpportunityProfile | null, horizon: WaiverHorizon): { value: number; reason: string } {
+function opportunityDisclosure(profile: OpportunityProfile | null, horizon: WaiverHorizon): { value: 0; reason: string } {
   if (!profile) return { value: 0, reason: 'No receiving opportunity data was supplied, so no role preference was applied.' };
-  const clamp = (v: number) => Math.max(-1, Math.min(1, v));
-  if (horizon === 'streamer') {
-    if (profile.trend == null) return { value: 0, reason: 'No observed target series, so no target-growth preference was applied to this streamer.' };
-    const value = Math.round(clamp(profile.trend / 4) * MAX_ROLE_SCORE * 100) / 100;
-    return { value, reason: `Streaming prefers target growth: ${profile.trend > 0 ? '+' : ''}${profile.trend} targets per game versus his earlier games moves the ranking score ${value >= 0 ? '+' : ''}${value}, capped at ${MAX_ROLE_SCORE}.` };
-  }
-  if (horizon === 'rest-of-season') {
-    if (profile.stability == null) return { value: 0, reason: 'No observed target series, so no stability preference was applied to this season-long add.' };
-    const value = Math.round(clamp((profile.stability - .5) / .5) * MAX_ROLE_SCORE * 100) / 100;
-    return { value, reason: `Season-long adds prefer stable reception volume: target stability ${profile.stability} moves the ranking score ${value >= 0 ? '+' : ''}${value}, capped at ${MAX_ROLE_SCORE}.` };
-  }
-  return { value: 0, reason: 'Dynasty stashes are valued on future stat forecasts, so no current-role preference was applied.' };
+  return { value: 0, reason: `${horizon} opportunity is disclosed but adds no ranking points; any trend effect must already appear as a bounded raw-stat forecast adjustment.` };
 }
 
 /** Deterministic, owner-scoped add/drop analysis. Every pair is an independent alternative. */
@@ -241,7 +226,7 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
     if (specialTeams?.coverageNote && (specialTeams.relevance === 'designated' || specialTeams.coverage === 'partial')) uncertainty.push(specialTeams.coverageNote);
     const role = positions(add).includes('K') ? { value: 0, reason: 'Kicker preferences use distance forecasts and supplied context; no receiving-role preference applies.' }
       : positions(add).includes('DEF') ? { value: 0, reason: 'Team defense preferences use the unit’s own raw categories, tier probabilities and matchup context; no receiving-role preference applies.' }
-      : roleScore(profile, horizon);
+      : opportunityDisclosure(profile, horizon);
     // Unmodeled return upside is worth exactly nothing here, by construction rather than by omission:
     // `SpecialTeamsBreakdown.rankingAdjustment` is typed as 0, so a return specialist can never be
     // promoted over a player this league's own rules score higher on a return touchdown nobody
@@ -260,7 +245,7 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
       `Week ${week}: ${scoringOf.explanation.replace(/\.$/, '')}.`,
       comparison ? `${starterGain! >= 0 ? '+' : ''}${starterGain} points versus ${comparison.player?.fullName ?? 'an empty eligible starter slot'}.` : 'Not enough forecast coverage to compare current starters.',
       weak ? `${benchGain! >= 0 ? '+' : ''}${benchGain} points versus weakest valued bench option ${weak.fullName} for this horizon.` : 'No fully valued, droppable bench baseline.',
-      s.role ? `Role share ${Math.round(s.role.previousShare * 100)}% → ${Math.round(s.role.recentShare * 100)}% over ${s.role.games} game(s); weekly forecast adjustment ${round((roleMultiplier(s) - 1) * 100)}%.` : positions(add).includes('K') ? 'Kicker workload and accuracy come from the distance forecast.' : positions(add).includes('DEF') ? 'Team defense volume comes from the unit’s own sack, takeaway and threshold forecast.' : 'Role trend is unknown.',
+      s.role ? `Legacy role share ${Math.round(s.role.previousShare * 100)}% → ${Math.round(s.role.recentShare * 100)}% over ${s.role.games} game(s) is disclosure-only and adds no points.` : positions(add).includes('K') ? 'Kicker workload and accuracy come from the distance forecast.' : positions(add).includes('DEF') ? 'Team defense volume comes from the unit’s own sack, takeaway and threshold forecast.' : 'Role trend is unknown.',
       role.reason,
     ];
     if (kicker) reasons.push(kicker.forecast.explanation, ...kicker.factors.map(f => `${f.label}: ${f.explanation} Ranking adjustment ${f.value >= 0 ? '+' : ''}${f.value}.`));

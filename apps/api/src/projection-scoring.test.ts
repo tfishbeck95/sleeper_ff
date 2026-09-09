@@ -4,6 +4,7 @@ import { EXPECTED_SCORING, interpretScoring, liveScoring, referenceScoring, scor
 import type { NflPlayer } from '@sleeper/domain';
 import { scoreLeagueForecasts, TRADE_UNAVAILABLE_STATUSES, weekPoints } from './projection-scoring.js';
 import type { PlayerSignal, WaiverSignals } from './waiver-signals.js';
+import { parseWaiverSignals } from './waiver-signals.js';
 
 const at = '2026-09-08T12:00:00Z';
 const scoring = liveScoring({ ...EXPECTED_SCORING }, at);
@@ -69,7 +70,7 @@ test('a pre-scored total, an unknown stat unit or an unverifiable identity is re
   assert.equal(inverted.players[0].weeks[0].mean.points, 26.4);
 });
 
-test('availability policy differs by consumer and every adjustment is disclosed after scoring', () => {
+test('availability differs by consumer and bounded trends change raw stats before scoring exactly once', () => {
   const signal: PlayerSignal = { playerId: 'a', weeks: [week(), week({ week: 9 })], injuryStatus: 'Out' };
   const streaming = scoreLeagueForecasts({ rules, players: [player('a')], signals: signals([signal]), availability: { policy: 'selected-week', selectedWeek: 8 } });
   assert.equal(streaming.players[0].weeks[0].points, 0);
@@ -79,12 +80,22 @@ test('availability policy differs by consumer and every adjustment is disclosed 
   assert.equal(valuation.players[0].weeks[1].points, 0, 'trade valuation stays conservative for the whole horizon');
   const adjusted = scoreLeagueForecasts({
     rules, players: [player('a')],
-    signals: signals([{ playerId: 'a', weeks: [week({ matchupMultiplier: 1.1 })], role: { previousShare: .4, recentShare: .6, games: 4 } }]),
+    signals: signals([{ playerId: 'a', weeks: [week({ forecastAdjustments: [{ trendId: 'target-share-week-8', label: 'Target share rose', input: 'targetShare', evidence: '18% to 24% over four games', baselineIncorporates: false, statChanges: { rec: 1, rec_yd: 12 }, maxAbsoluteStatChange: 12 }] })] }]),
   });
   const value = weekPoints(rules, adjusted.players[0].weeks[0]);
-  assert.equal(value.points, 31.94, '26.4 league-scored points, then a 1.1 opponent factor and a 1.1 role factor');
-  assert.match(value.explanation, /Opponent adjustment 1\.1 applied after league scoring/);
-  assert.match(value.explanation, /Role trend adjustment 10% applied after league scoring/);
+  assert.equal(value.points, 28.6, 'the adjusted reception and yards are scored once by league rules');
+  assert.match(value.explanation, /changed raw stats by rec \+1, rec_yd \+12/);
+  assert.match(value.explanation, /baseline did not incorporate it/);
+  const incorporated = scoreLeagueForecasts({ rules, players: [player('a')], signals: signals([{ playerId: 'a', weeks: [week({ forecastAdjustments: [{ trendId: 'qb-change', label: 'New quarterback', input: 'quarterbackChange', evidence: 'backup announced', baselineIncorporates: true, statChanges: {}, maxAbsoluteStatChange: 1 }] })] }]) });
+  assert.equal(incorporated.players[0].weeks[0].points, 26.4);
+  assert.match(weekPoints(rules, incorporated.players[0].weeks[0]).explanation, /already incorporated.*no second adjustment applied/);
+});
+
+test('generic point multipliers and duplicate or unbounded trend adjustments are prohibited', () => {
+  assert.throws(() => scoreLeagueForecasts({ rules, players: [player('a')], signals: signals([{ playerId: 'a', weeks: [week({ matchupMultiplier: 1.1 })] }]) }), /generic matchup point multipliers are prohibited/);
+  const adjustment = { trendId: 'snap-rise', label: 'Snap rate rose', input: 'snapRate', evidence: '55% to 80%', baselineIncorporates: false, statChanges: { rec: 1 }, maxAbsoluteStatChange: 1 } as const;
+  assert.throws(() => parseWaiverSignals(signals([{ playerId: 'a', weeks: [week({ forecastAdjustments: [adjustment, adjustment] })] }])), /duplicate forecast adjustment/);
+  assert.throws(() => parseWaiverSignals(signals([{ playerId: 'a', weeks: [week({ forecastAdjustments: [{ ...adjustment, statChanges: { rec: 2 } }] })] }])), /unbounded/);
 });
 
 test('a scoring snapshot that cannot score refuses the whole boundary rather than guessing', () => {

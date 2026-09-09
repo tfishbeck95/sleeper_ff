@@ -62,9 +62,6 @@ export interface ScoredForecasts extends ScoredForecastSet {
 }
 
 const positionsOf = (player: NflPlayer) => player.fantasyPositions.length ? player.fantasyPositions : player.position ? [player.position] : [];
-const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
-export const roleMultiplier = (signal: PlayerSignal) => 1 + (signal.role ? clamp((signal.role.recentShare - signal.role.previousShare) * .5, -.15, .15) : 0);
-
 /** Applies the league's validated rules to every supplied raw forecast. */
 export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecasts {
   const { rules, signals, players } = input;
@@ -199,12 +196,11 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
     const missing = required.filter(week => !signal.weeks.some(forecast => forecast.week === week && typeof forecast.bye === 'boolean'));
     if (missing.length) { refuse('coverage', `${player.fullName}: week ${missing.join(', ')} forecasts with explicit bye flags are missing.`); continue; }
 
-    // 4. Score every scenario with the same rule set, then apply and disclose post-scoring adjustments.
-    const role = roleMultiplier(signal);
+    // 4. Apply bounded trend changes to raw stats, then score every scenario exactly once.
     const status = signal.injuryStatus ?? player.injuryStatus ?? player.status;
     const weeks: ScoredWeek[] = [];
     for (const forecast of [...signal.weeks].sort((a, b) => a.week - b.week)) {
-      const week = scoreWeek(rules, signal, forecast, { role, status, absent, availability, quarterback: positions.includes('QB'), kicker: positions.includes('K'), defense: positions.includes('DEF') });
+      const week = scoreWeek(rules, signal, forecast, { status, absent, availability, quarterback: positions.includes('QB'), kicker: positions.includes('K'), defense: positions.includes('DEF') });
       // An inconsistent optional scenario is discarded and reported. It never silently widens a range,
       // and it never invalidates the mean, whose units and identity did validate.
       if (week.floor && week.floor.points > week.mean.points + 1e-9) {
@@ -249,14 +245,30 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
 
 function scoreWeek(
   rules: ScoringRules, signal: PlayerSignal, forecast: WeeklyForecast,
-  context: { kicker: boolean; defense: boolean; quarterback: boolean; role: number; status?: string | null; absent(status?: string | null): boolean; availability: AvailabilityPolicy },
+  context: { kicker: boolean; defense: boolean; quarterback: boolean; status?: string | null; absent(status?: string | null): boolean; availability: AvailabilityPolicy },
 ): ScoredWeek {
   // A `DEF` unit's return events are already inside `scoreDefense`, from the `def_st_*` rules. Every
   // other entity gets its own `st_*` attribution and coverage, including when nothing was modeled.
   const score = (stats: Record<string, number>, split?: WeeklyForecast['rushingSplit'], kicker?: WeeklyForecast['kicker'], defense?: WeeklyForecast['defense'], specialTeams?: WeeklyForecast['specialTeams']) =>
     context.defense ? scoreDefense(rules, stats, defense!)
       : withSpecialTeams(rules, context.kicker ? scoreKicker(rules, stats, kicker!) : context.quarterback ? scoreQuarterback(rules, stats, split) : rules.score(stats), specialTeams);
-  const mean = score(forecast.stats, forecast.rushingSplit, forecast.kicker, forecast.defense, forecast.specialTeams);
+  if ((forecast.matchupMultiplier ?? 1) !== 1) throw new Error(`Week ${forecast.week}: generic matchup point multipliers are prohibited; express opponent effects as bounded raw-stat forecast adjustments.`);
+  const disclosures: string[] = [];
+  const adjustedStats = { ...forecast.stats };
+  for (const adjustment of forecast.forecastAdjustments ?? []) {
+    if (adjustment.baselineIncorporates) {
+      disclosures.push(`${adjustment.label} (${adjustment.input}; ${adjustment.evidence}) is already incorporated in the baseline; no second adjustment applied.`);
+      continue;
+    }
+    for (const [stat, change] of Object.entries(adjustment.statChanges)) {
+      if (!rules.knows(stat)) throw new Error(`Week ${forecast.week}: trend adjustment ${adjustment.trendId} changes unknown stat "${stat}".`);
+      const next = (adjustedStats[stat] ?? 0) + change;
+      if (next < 0) throw new Error(`Week ${forecast.week}: trend adjustment ${adjustment.trendId} makes ${stat} negative.`);
+      adjustedStats[stat] = next;
+    }
+    disclosures.push(`${adjustment.label} (${adjustment.input}; ${adjustment.evidence}) changed raw stats by ${Object.entries(adjustment.statChanges).map(([stat, change]) => `${stat} ${change >= 0 ? '+' : ''}${change}`).join(', ')}, bounded to ±${adjustment.maxAbsoluteStatChange} per stat; baseline did not incorporate it.`);
+  }
+  const mean = score(adjustedStats, forecast.rushingSplit, forecast.kicker, forecast.defense, forecast.specialTeams);
   const floor = forecast.floorStats ? score(forecast.floorStats, forecast.floorRushingSplit, forecast.floorKicker, forecast.floorDefense, forecast.floorSpecialTeams) : null;
   const ceiling = forecast.ceilingStats ? score(forecast.ceilingStats, forecast.ceilingRushingSplit, forecast.ceilingKicker, forecast.ceilingDefense, forecast.ceilingSpecialTeams) : null;
   const bye = forecast.bye === true;
@@ -265,15 +277,10 @@ function scoreWeek(
   const out = context.availability.policy === 'entire-horizon'
     ? (signal.unavailableThroughWeek != null ? dated : designated)
     : dated || (forecast.week === context.availability.selectedWeek && designated);
-  const matchup = forecast.matchupMultiplier ?? 1;
-  const adjustments: string[] = [];
+  const adjustments: string[] = [...disclosures];
   if (bye) adjustments.push(`Week ${forecast.week} is a bye, so the league-scored forecast is zeroed.`);
   else if (out) adjustments.push(dated ? `Unavailable through week ${signal.unavailableThroughWeek}, so the league-scored forecast is zeroed.` : `Availability "${context.status}" zeroes the league-scored forecast for week ${forecast.week}.`);
-  else {
-    if (matchup !== 1) adjustments.push(`Opponent adjustment ${matchup} applied after league scoring.`);
-    if (context.role !== 1) adjustments.push(`Role trend adjustment ${Math.round((context.role - 1) * 1000) / 10}% applied after league scoring.`);
-  }
-  const multiplier = bye || out ? 0 : matchup * context.role;
+  const multiplier = bye || out ? 0 : 1;
   return {
     week: forecast.week, bye, opponent: forecast.opponent ?? null,
     mean, floor, ceiling, multiplier, adjustments,
@@ -305,18 +312,20 @@ function applyFloorLift(week: ScoredWeek, lift: number, stability: number): void
 
 /** The league-scored value a lineup consumes for one week, with its explanation preserved. */
 export function weekPoints(rules: ScoringRules, week: ScoredWeek): ScoredPoints {
-  if (week.multiplier === 1) return week.mean;
+  // Floor-only calibration belongs on the floor scenario, not in the mean's explanation.
+  const adjustments = week.adjustments.filter(value => !value.startsWith('Consistent targets'));
+  if (week.multiplier === 1 && !adjustments.length) return week.mean;
   const points = Math.round(week.mean.points * week.multiplier * 100) / 100;
   const quarterback = week.mean.quarterback ? scaleQuarterback(week.mean.quarterback, week.multiplier) : undefined;
   return {
     points,
     quarterback,
-    kicker: week.mean.kicker ? unavailableKicker(week.mean.kicker, week.adjustments.join(' ')) : undefined,
-    defense: week.mean.defense ? unavailableDefense(week.mean.defense, week.adjustments.join(' ')) : undefined,
+    kicker: week.mean.kicker ? unavailableKicker(week.mean.kicker, adjustments.join(' ')) : undefined,
+    defense: week.mean.defense ? unavailableDefense(week.mean.defense, adjustments.join(' ')) : undefined,
     // Coverage is a fact about the forecast, so it survives every post-scoring adjustment unchanged.
-    specialTeams: week.mean.specialTeams ? scaleSpecialTeams(week.mean.specialTeams, week.multiplier, week.adjustments.join(' ')) : undefined,
-    explanation: `${rules.describe(points)}${quarterback ? `. ${quarterback.explanation}` : ''}${week.adjustments.length ? ` (${week.adjustments.join(' ')})` : ''}`,
-    breakdown: week.multiplier === 0 ? `${week.mean.breakdown} — zeroed: ${week.adjustments.join(' ')}` : `${week.mean.breakdown}; adjusted by ${Math.round(week.multiplier * 1000) / 1000}`,
+    specialTeams: week.mean.specialTeams ? scaleSpecialTeams(week.mean.specialTeams, week.multiplier, adjustments.join(' ')) : undefined,
+    explanation: `${rules.describe(points)}${quarterback ? `. ${quarterback.explanation}` : ''}${adjustments.length ? ` (${adjustments.join(' ')})` : ''}`,
+    breakdown: week.multiplier === 0 ? `${week.mean.breakdown} — zeroed: ${adjustments.join(' ')}` : `${week.mean.breakdown}; raw-stat trend adjustment applied before scoring`,
     contributions: week.mean.contributions.map(value => ({ ...value, points: value.points * week.multiplier })),
   };
 }

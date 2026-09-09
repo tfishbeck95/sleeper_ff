@@ -55,15 +55,15 @@ function setup<T extends ReturnType<typeof demoWaiverInput>>(input: T): T {
   return input;
 }
 
-test('weekly QB ranges retain exact scenario scoring, including adjustments and unavailable splits', () => {
+test('weekly QB ranges retain exact scenario scoring and unavailable splits', () => {
   const input = setup(demoWaiverInput(now));
   const s = input.signals!.players[0];
-  s.weeks[0] = { week: 8, bye: false, stats: runner, floorStats: floor, ceilingStats: ceiling, rushingSplit: split, matchupMultiplier: 1.1 };
+  s.weeks[0] = { week: 8, bye: false, stats: runner, floorStats: floor, ceilingStats: ceiling, rushingSplit: split };
   const score = () => scoreLeagueForecasts({ rules: rules(), signals: input.signals!, players: input.players });
   const outlook = quarterbackOutlook(score().players[0].weeks[0])!;
-  assert.equal(outlook.mean.totalPoints, 25.3); assert.equal(outlook.floor!.totalPoints, 3.96); assert.equal(outlook.ceiling!.totalPoints, 50.6);
+  assert.equal(outlook.mean.totalPoints, 23); assert.equal(outlook.floor!.totalPoints, 3.6); assert.equal(outlook.ceiling!.totalPoints, 46);
   assert.equal(outlook.floor!.designedRuns, null);
-  assert.equal(outlook.floor!.interceptions!.points, -4.4);
+  assert.equal(outlook.floor!.interceptions!.points, -4);
   s.weeks[0].floorStats = { ...runner, rush_td: 10 };
   assert.equal(quarterbackOutlook(score().players[0].weeks[0])!.floor, null);
   s.weeks[0].bye = true;

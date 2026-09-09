@@ -1,7 +1,7 @@
 import { EXPECTED_SCORING, liveScoring, scoringSnapshotId } from '@sleeper/domain';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { MAX_ROLE_SCORE, recommendWaivers, roleScore, type WaiverInput } from './waivers.js';
+import { recommendWaivers, type WaiverInput } from './waivers.js';
 import { demoWaiverInput } from './test-support/scoring-fixtures.js';
 import { FileWaiverSignalProvider, parseWaiverSignals } from './waiver-signals.js';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -63,18 +63,19 @@ test('bye and injuries suppress streamers but allow justified season and dynasty
   assert.equal(rows(input, 'add-rb').find(r => r.horizon === 'streamer')!.need, 'injury-cover');
 });
 
-test('opponents, role trends and playoff schedule affect forecasts and ordering', () => {
+test('bounded raw-stat trends and playoff schedule affect forecasts and ordering', () => {
   const input = fixture();
   const before = rows(input, 'add-wr').find(r => r.horizon === 'rest-of-season')!;
-  signal(input, 'add-wr').weeks.at(-1)!.matchupMultiplier = 1.5;
+  const beforeStreamer = rows(input, 'add-wr').find(r => r.horizon === 'streamer')!;
+  signal(input, 'add-wr').weeks.at(-1)!.forecastAdjustments = [{ trendId: 'qb-change-week-17', label: 'Quarterback upgrade', input: 'quarterbackChange', evidence: 'starter returned', baselineIncorporates: false, statChanges: { rec_yd: 50 }, maxAbsoluteStatChange: 50 }];
   const after = rows(input, 'add-wr').find(r => r.horizon === 'rest-of-season')!;
   assert.ok(after.projectedPoints > before.projectedPoints);
   assert.ok(after.playoffPoints! > before.playoffPoints!);
   signal(input, 'add-wr').role = { recentShare: .8, previousShare: .3, games: 1 };
   const trend = rows(input, 'add-wr').find(r => r.horizon === 'streamer')!;
-  assert.equal(trend.projectedPoints, 16.1);
+  assert.equal(trend.projectedPoints, beforeStreamer.projectedPoints);
   assert.ok(trend.uncertainty.some(t => /only 1/.test(t)));
-  assert.match(trend.reasons.join(' '), /adjustment 15%/);
+  assert.match(trend.reasons.join(' '), /disclosure-only and adds no points/);
   input.league.settings!.playoff_week_start = 7;
   assert.equal(recommendWaivers(input).status, 'unavailable');
 });
@@ -235,7 +236,7 @@ test('a refused rostered projection is never treated as a zero-value drop or sta
   assert.ok(report.recommendations.every(r => r.weakestBench?.id !== 'bench-1'));
 });
 
-test('season-long adds prefer a stable target share; streamers prefer target growth', () => {
+test('observed target shapes are disclosed but never add synthetic ranking points', () => {
   // One player, one variable: only the shape of his observed target series changes.
   const shaped = (recentTargets: number[]) => {
     const input = fixture();
@@ -248,22 +249,22 @@ test('season-long adds prefer a stable target share; streamers prefer target gro
   const steady = shaped([9, 8, 10, 9, 9, 8]), climbing = shaped([2, 3, 4, 12, 14, 15]);
   const row = (rows: typeof steady, horizon: string) => rows.find(r => r.horizon === horizon)!;
   assert.equal(row(steady, 'streamer').projectedPoints, row(climbing, 'streamer').projectedPoints, 'the league-scored points are identical');
-  assert.ok(row(steady, 'rest-of-season').score > row(climbing, 'rest-of-season').score, 'a season-long add prefers the stable target share');
-  assert.ok(row(climbing, 'streamer').score > row(steady, 'streamer').score, 'a streamer prefers the climbing target share');
-  assert.match(row(steady, 'rest-of-season').reasons.find(r => /prefer stable reception volume/.test(r))!, /target stability 0\.922 moves the ranking score \+1\.27, capped at 1\.5/);
-  assert.match(row(climbing, 'streamer').reasons.find(r => /prefers target growth/.test(r))!, /moves the ranking score \+1\.5, capped at 1\.5/);
-  // Whatever the series, the preference stays inside its documented bound.
-  for (const rows of [steady, climbing]) for (const r of rows) assert.ok(Math.abs(roleScore(r.opportunity, r.horizon).value) <= MAX_ROLE_SCORE);
+  assert.equal(row(steady, 'rest-of-season').score, row(climbing, 'rest-of-season').score);
+  assert.equal(row(climbing, 'streamer').score, row(steady, 'streamer').score);
+  assert.match(row(steady, 'rest-of-season').reasons.find(r => /adds no ranking points/.test(r))!, /bounded raw-stat forecast adjustment/);
 });
 
-test('role signals move the ranking score only, never the league-scored points', () => {
+test('role observations move neither ranking score nor league-scored points', () => {
   const plain = fixture(), enriched = fixture();
   for (const s of enriched.signals!.players) s.recentTargets = [9, 8, 10, 9, 9, 8];
   const before = recommendWaivers(plain).recommendations;
   const after = recommendWaivers(enriched).recommendations;
   for (const row of after) {
     const match = before.find(r => r.id === row.id);
-    if (match) assert.equal(row.projectedPoints, match.projectedPoints, `${row.id} points must not move with a role signal`);
+    if (match) {
+      assert.equal(row.projectedPoints, match.projectedPoints, `${row.id} points must not move with a role signal`);
+      assert.equal(row.score, match.score, `${row.id} rank must not move with a role label`);
+    }
   }
 });
 
