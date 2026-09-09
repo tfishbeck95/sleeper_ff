@@ -24,7 +24,7 @@ export function WaiverPlanner({ leagueId, userId, week, demo, force = false }: {
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setReport(null); setError(''); setCopyStatus(''); setExcluded(new Set()); setFilters(defaultWaiverFilters);
-    const query = new URLSearchParams({ userId: userId ?? 'sample', week: String(week), force: String(force || retry > 0) });
+    const query = new URLSearchParams({ week: String(week), force: String(force || retry > 0) });
     request<WaiverReport>(`/api/waivers/${encodeURIComponent(demo ? 'demo' : leagueId)}?${query}`, controller.signal)
       .then(value => { if (!controller.signal.aborted) { setReport(value); setLoading(false); } })
       .catch(reason => { if (!controller.signal.aborted) { setError(reason instanceof Error ? reason.message : 'Waiver analysis failed.'); setLoading(false); } });

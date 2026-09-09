@@ -47,7 +47,7 @@ export function TradeReportView({ report, demo }: { report: TradeReport; demo: b
 export function TradePlanner({ leagueId, userId, week, demo, force = false }: { leagueId: string; userId?: string; week: number; demo: boolean; force?: boolean }) {
   const [report, setReport] = useState<TradeReport | null>(null), [error, setError] = useState(''), [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0), [gap, setGap] = useState('.25'), [risk, setRisk] = useState('.65'), [format, setFormat] = useState('redraft');
-  const query = new URLSearchParams({ userId: userId ?? 'sample', week: String(week), force: String(force || retry > 0), maxValueGap: gap, maxRisk: risk, ...(demo ? { format } : {}) }).toString();
+  const query = new URLSearchParams({ week: String(week), force: String(force || retry > 0), maxValueGap: gap, maxRisk: risk, ...(demo ? { format } : {}) }).toString();
   const key = `${demo ? 'demo' : leagueId}:${query}:${retry}`;
   const [loadedKey, setLoadedKey] = useState('');
   useEffect(() => {

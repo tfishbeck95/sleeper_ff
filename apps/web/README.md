@@ -29,4 +29,4 @@ Reference: [Sleeper’s public API documentation](https://docs.sleeper.com/).
 - Connect a league; while loading, confirm no sample advice appears. Refresh with the API unavailable; verify the last successful view remains and a sync error appears.
 - Reconnect or change leagues/weeks and confirm stale results and checklist state are not carried into another selection.
 
-For a separately hosted frontend, configure a same-origin `/api` service or set `VITE_API_URL`. `VITE_API_TOKEN` defaults to this repository’s development token; Vite variables are public build-time configuration and must not contain production secrets. This change does not add production authentication or deploy the existing Node API.
+For a separately hosted frontend, configure `VITE_API_URL`, allow only the exact frontend origin, and send requests over HTTPS. Authentication uses the server-issued host-only session cookie; never put authentication secrets in Vite variables.
