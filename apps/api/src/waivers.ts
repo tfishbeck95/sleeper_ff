@@ -1,4 +1,5 @@
-import { interpretLeagueRules, type League, type NflPlayer, type Roster, type WaiverHorizon, type WaiverNeed, type WaiverPlayer, type WaiverRecommendation, type WaiverReport } from '@sleeper/domain';
+import { interpretLeagueRules, scoringFormatLabel, type League, type NflPlayer, type OpportunityProfile, type Roster, type ScoringContribution, type WaiverHorizon, type WaiverNeed, type WaiverPlayer, type WaiverRecommendation, type WaiverReport } from '@sleeper/domain';
+import { roleMultiplier, scoreLeagueForecasts, WAIVER_UNAVAILABLE_STATUSES, weekPoints, type ScoredForecasts } from './projection-scoring.js';
 import type { PlayerSignal, WaiverSignals } from './waiver-signals.js';
 
 export interface WaiverInput {
@@ -7,10 +8,34 @@ export interface WaiverInput {
 }
 const round = (v: number) => Math.round(v * 10) / 10;
 const average = (v: number[]) => v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
-const unavailable = (status?: string | null) => ['out', 'ir', 'pup', 'suspended', 'inactive', 'injured reserve'].includes((status ?? '').toLowerCase());
+const unavailable = (status?: string | null) => WAIVER_UNAVAILABLE_STATUSES.includes((status ?? '').toLowerCase());
 const allIds = (roster: Roster) => [...new Set([...roster.playerIds, ...roster.starterIds, ...roster.reserveIds, ...roster.taxiIds].filter(id => id && id !== '0'))];
 const positions = (p: NflPlayer) => p.fantasyPositions.length ? p.fantasyPositions : p.position ? [p.position] : [];
 const identity = (p: NflPlayer): WaiverPlayer => ({ id: p.id, name: p.fullName, positions: positions(p), team: p.team });
+
+/** The most a receiving-role signal may move a waiver ranking score, in either direction. */
+export const MAX_ROLE_SCORE = 1.5;
+/**
+ * A bounded, horizon-appropriate preference over receiving role. It moves the *ranking score* only:
+ * projected points stay exactly what this league's rules produced, so a reception is never paid for
+ * twice. Season-long adds prefer a target share that already holds steady; streamers prefer the
+ * player whose targets are climbing, because that is where a breakout comes from.
+ */
+export function roleScore(profile: OpportunityProfile | null, horizon: WaiverHorizon): { value: number; reason: string } {
+  if (!profile) return { value: 0, reason: 'No receiving opportunity data was supplied, so no role preference was applied.' };
+  const clamp = (v: number) => Math.max(-1, Math.min(1, v));
+  if (horizon === 'streamer') {
+    if (profile.trend == null) return { value: 0, reason: 'No observed target series, so no target-growth preference was applied to this streamer.' };
+    const value = Math.round(clamp(profile.trend / 4) * MAX_ROLE_SCORE * 100) / 100;
+    return { value, reason: `Streaming prefers target growth: ${profile.trend > 0 ? '+' : ''}${profile.trend} targets per game versus his earlier games moves the ranking score ${value >= 0 ? '+' : ''}${value}, capped at ${MAX_ROLE_SCORE}.` };
+  }
+  if (horizon === 'rest-of-season') {
+    if (profile.stability == null) return { value: 0, reason: 'No observed target series, so no stability preference was applied to this season-long add.' };
+    const value = Math.round(clamp((profile.stability - .5) / .5) * MAX_ROLE_SCORE * 100) / 100;
+    return { value, reason: `Season-long adds prefer stable reception volume: target stability ${profile.stability} moves the ranking score ${value >= 0 ? '+' : ''}${value}, capped at ${MAX_ROLE_SCORE}.` };
+  }
+  return { value: 0, reason: 'Dynasty stashes are valued on future stat forecasts, so no current-role preference was applied.' };
+}
 
 /** Deterministic, owner-scoped add/drop analysis. Every pair is an independent alternative. */
 export function recommendWaivers(input: WaiverInput): WaiverReport {
@@ -23,7 +48,9 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
   const rostered = new Set(rosters.flatMap(allIds));
   const report: WaiverReport = {
     leagueId: league.id, rosterId: roster.rosterId, week, season: league.season, generatedAt: now.toISOString(), rosterSyncedAt: roster.synchronizedAt,
-    scoring: rules.scoring.configuration, source: null, status: 'unavailable', warnings: [], rosteredCount: rostered.size, eligibleCount: 0, evaluatedCount: 0, recommendations: [],
+    scoring: rules.scoring.configuration, scoringSnapshotId: rules.scoring.snapshotId, scoringLabel: scoringFormatLabel(rules.scoring.configuration),
+    forecastUpdatedAt: null, rejected: [],
+    source: null, status: 'unavailable', warnings: [], rosteredCount: rostered.size, eligibleCount: 0, evaluatedCount: 0, recommendations: [],
     submission: { supported: false, url: /^\d{1,30}$/.test(league.id) ? `https://sleeper.com/leagues/${league.id}` : null, instruction: 'Copy this plan, then submit claims manually in Sleeper. The supported Sleeper API is read-only; no claims have been submitted.' },
   };
   if (!rules.scoring.actionable) { report.warnings.push('Validated complete live scoring is required. Lineup, waiver and trade rankings are unavailable.', ...rules.scoring.configuration.issues.map(issue => issue.message)); return report; }
@@ -38,10 +65,18 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
     report.warnings.push('No forecast source is configured for this season and week. League-scored projections, schedules, role trends and dynasty values are required to evaluate add/drop pairs.'); return report;
   }
   report.source = { name: signals.source, updatedAt: signals.updatedAt };
+  report.forecastUpdatedAt = signals.updatedAt;
   const age = now.getTime() - Date.parse(signals.updatedAt);
   if (!Number.isFinite(age) || age > 48 * 60 * 60_000 || age < -5 * 60_000) {
     report.warnings.push('Forecast source is stale (over 48 hours) or has an invalid future timestamp. Refresh it before ranking claims.'); return report;
   }
+  // The single input boundary: raw stat forecasts become league-scored points exactly once, here.
+  const scored: ScoredForecasts = scoreLeagueForecasts({
+    rules: rules.scoring, signals, players: input.players,
+    availability: { policy: 'selected-week', selectedWeek: week, statuses: WAIVER_UNAVAILABLE_STATUSES }, scoredAt: now,
+  });
+  report.rejected = scored.rejected;
+  if (scored.rejected.length) report.warnings.push(`${scored.rejected.length} projection(s) were refused because their raw-stat units or player identity could not be validated. They are excluded rather than scored as zero.`);
   if (now.getTime() - Date.parse(roster.synchronizedAt) > 10 * 60_000) report.warnings.push('Roster snapshot is over 10 minutes old. Refresh availability before submitting claims.');
   report.warnings.push('Availability is based on roster membership and supplied constraints. Confirm waiver locks, processing deadlines and commissioner restrictions in Sleeper.');
   const policy = signals.leagues?.[league.id];
@@ -51,12 +86,21 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
   const isEligible = (p: NflPlayer, slot: string) => positions(p).some(pos => rules.roster.eligiblePositions(slot).includes(pos));
   const fits = (p: NflPlayer) => rules.roster.starters.some(slot => isEligible(p, slot.position));
   const status = (p: NflPlayer, s?: PlayerSignal) => s?.injuryStatus ?? p.injuryStatus ?? p.status;
-  const roleMultiplier = (s: PlayerSignal) => 1 + (s.role ? Math.max(-.15, Math.min(.15, (s.role.recentShare - s.role.previousShare) * .5)) : 0);
+  // Points come only from the scoring boundary; a refused or absent forecast stays unknown, never zero.
+  const scoredWeek = (id: string, w: number) => scored.byPlayerId.get(id)?.weeks.find(f => f.week === w);
   const points = (p: NflPlayer, w: number): number | null => {
-    const s = forecasts.get(p.id); const forecast = s?.weeks.find(f => f.week === w);
+    const s = forecasts.get(p.id);
+    // A refused projection is unknown, not zero: a bye or absence never rescues it into a usable value.
+    if (s && !scored.byPlayerId.has(p.id)) return null;
+    const forecast = s?.weeks.find(f => f.week === w);
     if (forecast?.bye || (w === week && unavailable(status(p, s))) || (s?.unavailableThroughWeek != null && w <= s.unavailableThroughWeek)) return 0;
-    if (!s || !forecast) return null;
-    return round(rules.scoring.score(forecast.stats).points * (forecast.matchupMultiplier ?? 1) * roleMultiplier(s));
+    const week_ = scoredWeek(p.id, w);
+    if (!week_) return null;
+    return round(week_.points);
+  };
+  const explain = (p: NflPlayer, w: number): { explanation: string; contributions: ScoringContribution[] } => {
+    const week_ = scoredWeek(p.id, w);
+    return week_ ? weekPoints(rules.scoring, week_) : { explanation: `No league-scored forecast covers ${p.fullName} in week ${w}.`, contributions: [] };
   };
   const playoffStart = rules.playoffs.startsWeek;
   const playoffEnd = playoffStart == null ? null : Math.min(18, playoffStart + (rules.playoffs.rounds ?? 1) - 1 + Number(rules.playoffs.twoWeekChampionship));
@@ -71,7 +115,7 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
   };
   const value = (p: NflPlayer, horizon: WaiverHorizon): number | null => {
     if (horizon === 'streamer') return points(p, week);
-    if (horizon === 'dynasty') { const s = forecasts.get(p.id); return s?.dynastyStats ? rules.scoring.score(s.dynastyStats).points : null; }
+    if (horizon === 'dynasty') return scored.byPlayerId.get(p.id)?.dynasty?.points ?? null;
     const ros = meanFor(p, remainingWeeks); const playoffs = meanFor(p, playoffWeeks);
     return ros == null ? null : round(playoffs == null ? ros : .75 * ros + .25 * playoffs);
   };
@@ -91,8 +135,8 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
   if (own.length < allIds(roster).length) report.warnings.push('Some rostered players have no player metadata; those players cannot be valued or recommended as drops.');
   const candidatePool = input.players.filter(p => !rostered.has(p.id) && fits(p) && forecasts.get(p.id)?.acquisitionEligible !== false && !policy?.blockedAddIds?.includes(p.id) && !['retired', 'deceased'].includes((p.status ?? '').toLowerCase()) && (p.team != null || rules.format === 'dynasty'));
   report.eligibleCount = candidatePool.length;
-  const candidates = candidatePool.filter(p => forecasts.has(p.id)); report.evaluatedCount = candidates.length;
-  if (candidates.length < candidatePool.length) report.warnings.push(`${candidatePool.length - candidates.length} available players lack forecasts and were not ranked.`);
+  const candidates = candidatePool.filter(p => scored.byPlayerId.has(p.id)); report.evaluatedCount = candidates.length;
+  if (candidates.length < candidatePool.length) report.warnings.push(`${candidatePool.length - candidates.length} available players lack a validated, league-scored forecast and were not ranked.`);
   const active = own.filter(p => !roster.reserveIds.includes(p.id) && !roster.taxiIds.includes(p.id));
   const canPlay = (p: NflPlayer, w: number) => {
     const s = forecasts.get(p.id);
@@ -163,25 +207,42 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
     if (!comparison) uncertainty.push('Starter comparison is incomplete; unknown starter values are not treated as zero.');
     if (horizon === 'dynasty') uncertainty.push('Future-week stat forecasts carry substantial development and role uncertainty.');
     if (!playoffWeeks.length) uncertainty.push('No remaining playoff schedule is configured.');
+    const profile = scored.byPlayerId.get(add.id)!.opportunity;
+    // Touchdown dependence is a genuine source of week-to-week variance, so it grades as uncertainty.
+    if (profile?.archetype === 'touchdown-dependent') uncertainty.push(`Touchdown-dependent: ${Math.round((profile.touchdownShare ?? 0) * 100)}% of the league-scored total comes from touchdowns, the least repeatable part of a projection.`);
+    if (profile && profile.stability == null && profile.targets != null) uncertainty.push('No observed target series was supplied, so weekly target stability is unknown.');
     const risk = horizon === 'dynasty' || unavailable(status(add, s)) || uncertainty.length >= 3 ? 'high' : uncertainty.length || (status(add, s) ?? '').toLowerCase() === 'questionable' ? 'medium' : 'low';
-    const score = round(net + Math.max(0, starterGain ?? 0) * .6 + (need === 'bye-cover' || need === 'injury-cover' ? 2 : 0) - (risk === 'high' ? 2 : risk === 'medium' ? .75 : 0));
+    const role = roleScore(profile, horizon);
+    const score = round(net + Math.max(0, starterGain ?? 0) * .6 + (need === 'bye-cover' || need === 'injury-cover' ? 2 : 0) - (risk === 'high' ? 2 : risk === 'medium' ? .75 : 0) + role.value);
     if (score <= 0) continue;
     const urgency = horizon === 'streamer' || need === 'bye-cover' || need === 'injury-cover' ? 'high' : horizon === 'dynasty' ? 'low' : 'medium';
     const baseShare = Math.min(.3, .02 + Math.max(0, score) * .009 + (urgency === 'high' ? .03 : 0));
     const minimum = Math.floor(Math.min(balance ?? 0, (budget ?? balance ?? 0) * baseShare * (risk === 'high' ? .4 : .65)));
     const maximum = Math.ceil(Math.min(balance ?? 0, (budget ?? balance ?? 0) * baseShare * (risk === 'high' ? 1.3 : 1.1)));
+    const scoringOf = horizon === 'dynasty' ? scored.byPlayerId.get(add.id)!.dynasty! : explain(add, week);
     const reasons = [
-      `${rules.scoring.receptionFormat} league scoring applied to raw stat forecasts; ${horizon === 'streamer' ? 'current-week points' : horizon === 'dynasty' ? 'future typical-week points' : 'remaining-week average with 25% weight on the remaining playoff average'}.`,
+      `Your league's ${report.scoringLabel} scoring applied to the provider's raw stat forecast; ${horizon === 'streamer' ? 'current-week points' : horizon === 'dynasty' ? 'future typical-week points' : 'remaining-week average with 25% weight on the remaining playoff average'}.`,
+      `Week ${week}: ${scoringOf.explanation}.`,
       comparison ? `${starterGain! >= 0 ? '+' : ''}${starterGain} points versus ${comparison.player?.fullName ?? 'an empty eligible starter slot'}.` : 'Not enough forecast coverage to compare current starters.',
       weak ? `${benchGain! >= 0 ? '+' : ''}${benchGain} points versus weakest valued bench option ${weak.fullName} for this horizon.` : 'No fully valued, droppable bench baseline.',
       s.role ? `Role share ${Math.round(s.role.previousShare * 100)}% → ${Math.round(s.role.recentShare * 100)}% over ${s.role.games} game(s); weekly forecast adjustment ${round((roleMultiplier(s) - 1) * 100)}%.` : 'Role trend is unknown.',
+      role.reason,
     ];
+    if (profile) {
+      reasons.push(profile.explanation);
+      if (profile.receptionPoints > 0) reasons.push(profile.receptionExplanation);
+      if (profile.passCatchingBack) reasons.push(`Pass-catching back: ${profile.routeParticipation != null ? `${Math.round(profile.routeParticipation * 100)}% route participation` : `${profile.targets} targets per week`} keeps him on the field on passing downs. Standard-scoring running-back rankings do not price those receptions; your league does.`);
+    }
     const upcoming = remainingWeeks.slice(0, 3).map(w => ({ week: w, opponent: s.weeks.find(f => f.week === w)?.opponent ?? null, bye: s.weeks.find(f => f.week === w)?.bye ?? false, points: points(add, w) }));
     const playoffPoints = meanFor(add, playoffWeeks);
     if (playoffPoints != null) reasons.push(`Playoff weeks ${playoffWeeks.join(', ')} average ${round(playoffPoints)} points after opponent and bye adjustments.`);
     report.recommendations.push({
       id: `${add.id}:${horizon}`, priority: 0, add: identity(add), drop: drop ? identity(drop) : null, horizon, risk, need, score,
-      projectedPoints: round(projected), starterGain, benchGain, starterComparison: currentStarter ? identity(currentStarter) : null, weakestBench: weak ? identity(weak) : null,
+      projectedPoints: round(projected),
+      pointsExplanation: `${rules.scoring.describe(round(projected))}${horizon === 'streamer' ? ' this week' : horizon === 'dynasty' ? ' per future typical week' : ' per weighted remaining week'}`,
+      contributions: scoringOf.contributions,
+      opportunity: profile,
+      starterGain, benchGain, starterComparison: currentStarter ? identity(currentStarter) : null, weakestBench: weak ? identity(weak) : null,
       dropCost: drop ? round(dropCost) : null,
       dropReason: drop ? `${drop.fullName} is the lowest-retention legal bench drop (${round(dropCost)} points, using the maximum of current, season${rules.format === 'dynasty' ? ' and dynasty' : ''} value).` : 'An active roster slot is open; no drop is required.',
       upcoming, playoffPoints: playoffPoints == null ? null : round(playoffPoints), reasons, uncertainty,

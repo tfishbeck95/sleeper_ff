@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { EXPECTED_SCORING, liveScoring, referenceScoring, scoringUnavailable, interpretScoring, scoreStartDecision, scoringSummary } from './index.js';
+import { EXPECTED_SCORING, liveScoring, referenceScoring, scoringUnavailable, interpretScoring, scoringFormatLabel, scoringSummary } from './index.js';
 const at = '2026-09-08T12:00:00Z';
 
 test('expected key mapping covers every documented screenshot value without loading text at runtime', async () => {
@@ -34,14 +34,18 @@ test('missing and mismatched documented values are reported explicitly, never fi
   for (const raw of [undefined, null, [], {}, 'PPR', { ...EXPECTED_SCORING, extra: Infinity }, { ...EXPECTED_SCORING, extra: NaN }]) assert.equal(liveScoring(raw, at).kind, 'unavailable');
   assert.equal(liveScoring(EXPECTED_SCORING, 'invalid').kind, 'unavailable');
 });
-test('partial, unavailable and legacy scoring cannot score statistics or start decisions', () => {
+test('partial, unavailable and legacy scoring cannot score statistics at all', () => {
   for (const config of [referenceScoring(), scoringUnavailable(), liveScoring({ rec: 1 }, at)]) {
     const rules = interpretScoring([], config);
     assert.equal(rules.actionable, false);
     assert.throws(() => rules.score({ rec: 5 }), /complete live/);
-    assert.equal(scoreStartDecision({ projectedPoints: 14, trend: 'up' }, config), null);
   }
   assert.equal(interpretScoring({ rec: 1 }).configuration.kind, 'partial-reference');
   assert.equal(interpretScoring({}).receptionFormat, 'unknown');
-  assert.equal(scoreStartDecision({ projectedPoints: 14, trend: 'up' }), null);
+  assert.equal(scoringFormatLabel(scoringUnavailable()), 'unscored');
+  assert.equal(scoringFormatLabel(liveScoring({ ...EXPECTED_SCORING }, at)), 'full-PPR');
+  assert.equal(scoringFormatLabel(referenceScoring({ rec: .5 })), 'half-PPR');
+  assert.equal(scoringFormatLabel(referenceScoring({ rec: 0 })), 'non-PPR');
+  assert.equal(scoringFormatLabel(referenceScoring({ rec: .25 })), '0.25-point-reception');
+  assert.equal(scoringFormatLabel(referenceScoring({})), 'custom');
 });

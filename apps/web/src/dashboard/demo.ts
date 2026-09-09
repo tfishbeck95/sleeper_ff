@@ -4,7 +4,7 @@ import type { DashboardAlert, DashboardData, DashboardPlayer, ProposedAction, St
 
 // A self-contained, deliberately fictional scenario. Never mixed with a connected league.
 export function createDemo(): DashboardData {
-  const player = (id: string, name: string, position: string, team: string, points: number): DashboardPlayer => ({ id, name, position, team, points });
+  const player = (id: string, name: string, position: string, team: string, illustrativePoints: number): DashboardPlayer => ({ id, name, position, team, illustrativePoints });
   const reed = player('sample-1', 'Marcus Reed', 'WR', 'SEA', 15.8);
   const cole = player('sample-2', 'Jordan Cole', 'WR', 'DEN', 11.2);
   const brooks = player('sample-3', 'Devin Brooks', 'RB', 'ATL', 14.6);
@@ -32,7 +32,7 @@ export function createDemo(): DashboardData {
     ], starts, waivers,
     trades: [action('trade-depth', 'trade', 'Turn receiver depth into RB cover', 'Red Zone Rebels have extra running backs and need a WR. Consider Jordan Cole for their backup RB, Miles Carter, after comparing roles and rest-of-season value.', 68)],
     needs: [{ position: 'QB', status: 'Covered', tone: 'good' }, { position: 'RB', status: 'Needs depth', tone: 'warning' }, { position: 'WR', status: 'Surplus', tone: 'good' }, { position: 'TE', status: 'Bye cover', tone: 'warning' }],
-    matchup: { opponent: 'Gridiron Guild', projectedFor: 126.8, projectedAgainst: 119.4, winChance: 58, paths: ['The two start/sit changes offer a combined 8.3 projected points if both remain eligible.', 'Fill the empty kicker slot and replace the bye-week starter before their games lock.'], risks: ['A limited workload for Mills could reduce your running-back scoring.', 'Your opponent’s receivers have a wide scoring range. A 7.4-point projected lead is far from secure.'] },
+    matchup: { opponent: 'Gridiron Guild', illustrativeFor: 126.8, illustrativeAgainst: 119.4, winChance: 58, paths: ['The two start/sit changes offer a combined 8.3 projected points if both remain eligible.', 'Fill the empty kicker slot and replace the bye-week starter before their games lock.'], risks: ['A limited workload for Mills could reduce your running-back scoring.', 'Your opponent’s receivers have a wide scoring range. A 7.4-point projected lead is far from secure.'] },
     standings: [
       { id: '1', name: 'Red Zone Rebels', wins: 6, losses: 1, ties: 0, points: 971.4, isUser: false },
       { id: '2', name: 'The Sunday Club', wins: 5, losses: 2, ties: 0, points: 945.8, isUser: false },

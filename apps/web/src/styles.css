@@ -536,6 +536,49 @@ td small { display: block; font-size: 12px; margin-top: 5px; line-height: 1.4; c
 .waiver-manual-note { border-top: 1px solid #e5e9f0; padding-top: 14px; }
 .waiver-empty { text-align: center; padding: 28px 12px; font-size: 13px; color: #68738a; line-height: 1.7; }
 @media (max-width: 600px) { .waiver-planner { padding: 14px; } .waiver-pair { padding: 12px; } .waiver-comparisons { grid-template-columns: 1fr; gap: 10px; } }
+/* Lineup analysis: league-scored points with the arithmetic that produced them, on demand. */
+.lineup-analysis { padding: 20px; min-width: 0; margin-top: 16px; font-size: 13px; line-height: 1.6; }
+.lineup-analysis summary { cursor: pointer; font-weight: 650; }
+.lineup-analysis ul { padding-left: 20px; }
+.lineup-source, .lineup-methodology { color: #68738a; font-size: 11px; line-height: 1.65; }
+.lineup-source code { font-size: 10px; word-break: break-all; }
+.lineup-methodology { border-top: 1px solid #e5e9f0; padding-top: 12px; margin-top: 16px; }
+.lineup-warnings, .lineup-rejections { font-size: 12px; color: #53617a; line-height: 1.65; }
+.lineup-rejections { padding: 12px; background: #fff4de; border-radius: 8px; margin-top: 12px; }
+.lineup-slots, .start-sit-list { list-style: none; padding: 0; margin: 14px 0; display: grid; gap: 10px; }
+.lineup-slots > li { display: grid; grid-template-columns: 48px 1fr auto; align-items: baseline; gap: 8px; padding: 10px 12px; border: 1px solid #e1e6ee; border-radius: 9px; }
+.lineup-slot-name { color: #354ed0; font-size: 10px; font-weight: 700; letter-spacing: .06em; }
+.lineup-slot-points { font-size: 15px; font-weight: 650; color: #29334b; }
+.lineup-slot-range { grid-column: 2 / -1; color: #68738a; font-size: 10px; }
+.lineup-slots .scoring-breakdown { grid-column: 1 / -1; }
+.start-sit { border: 1px solid #e1e6ee; border-left: 3px solid #5263d9; border-radius: 9px; padding: 14px; }
+.start-sit h4 { margin: 6px 0; font-size: 15px; }
+.start-sit-slot { display: flex; align-items: center; gap: 6px; color: #596680; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+.start-sit-cautions { color: #68738a; font-size: 11px; }
+.lineup-empty { text-align: center; padding: 22px 12px; color: #68738a; }
+.lineup-matchup-totals { display: flex; align-items: center; justify-content: center; gap: 18px; margin: 14px 0; }
+.lineup-matchup-totals strong { display: block; font-size: 26px; color: #29334b; }
+.lineup-matchup-totals span { color: #68738a; font-size: 11px; }
+.scoring-breakdown, .scoring-breakdown-empty { font-size: 11px; color: #53617a; line-height: 1.6; margin: 8px 0; }
+.scoring-breakdown table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+.scoring-breakdown th, .scoring-breakdown td { padding: 4px 6px; text-align: right; border-bottom: 1px solid #eef1f6; font-weight: 500; }
+.scoring-breakdown th[scope="row"], .scoring-breakdown thead th:first-child { text-align: left; }
+.scoring-breakdown thead th { color: #68738a; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+@media (max-width: 600px) { .lineup-analysis { padding: 14px; } .lineup-slots > li { grid-template-columns: 44px 1fr auto; } }
+/* Receiving opportunity: context for a projection, never presented as extra value. */
+.opportunity-detail { margin: 8px 0; }
+.opportunity-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 6px; }
+.opportunity-tag { padding: 3px 8px; border-radius: 20px; background: #f0f3fa; color: #43506a; font-size: 10px; font-weight: 650; }
+.opportunity-tag.archetype-volume-driven { color: #146454; background: #e8f7f1; }
+.opportunity-tag.archetype-touchdown-dependent { color: #8b4b11; background: #fff4de; }
+.opportunity-tag.pass-catching { color: #3042ac; background: #eaeeff; }
+.opportunity-tag.floor-lift { color: #4a3b8c; background: #f0ecff; }
+.opportunity-breakdown { font-size: 11px; color: #53617a; line-height: 1.6; }
+.opportunity-breakdown dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; margin: 8px 0; }
+.opportunity-breakdown dt { color: #68738a; font-size: 10px; }
+.opportunity-breakdown dd { margin: 0; color: #29334b; font-weight: 650; }
+.opportunity-note { color: #68738a; font-style: italic; }
+@media (max-width: 600px) { .opportunity-breakdown dl { grid-template-columns: 1fr; } }
 /* Trade planning keeps both sides visible and supports narrow dashboard columns. */
 .trade-planner { padding: 22px; min-width: 0; font-size: 13px; line-height: 1.55; }
 .trade-planner-heading, .trade-message-actions, .trade-filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

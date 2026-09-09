@@ -57,3 +57,42 @@ fictional demo configurations are partial references and cannot enable those
 engines. Existing stores need a successful synchronization to gain live provenance.
 The UI shows the scoring state, observation timestamp, compact summary, and detailed
 validation differences; recommendation reports also carry the scoring snapshot used.
+
+### The projection input boundary
+
+Forecast providers supply raw projected statistics plus optional floor and ceiling
+raw-stat scenarios. No engine accepts a generic projected-points value. One module,
+`apps/api/src/projection-scoring.ts`, applies the synchronized league's own
+`ScoringRules` to every raw stat line, computes mean/floor/ceiling points from that
+same rule set, stamps each result with the scoring snapshot ID and the forecast
+timestamp, and refuses any projection whose raw-stat units or player identity cannot
+be validated — including pre-scored keys such as `points` or `projectedPoints`.
+Refusals are reported per projection and excluded; they are never zero-filled.
+
+Lineup analysis, start/sit, matchup totals and win probability, roster strength,
+replacement levels, bye and playoff outlooks, waiver recommendations and trade
+valuations all consume only that output. `LeagueEvaluationService` re-checks each
+player's snapshot ID against the league's and fails closed on a mismatch, so points
+scored under one commissioner's rules can never rank another league. A source-level
+test asserts that no module besides the boundary calls `ScoringRules.score`.
+
+Every scored value carries a manager-facing sentence (`18.4 points under your
+league's full-PPR scoring`), the itemized arithmetic, and the ordered scoring
+contributions, which the UI discloses on demand. Post-scoring adjustments (bye,
+availability window, opponent strength, role trend) are applied separately from the
+scoring and listed alongside it. See [`docs/lineup.md`](lineup.md) for the contract.
+
+Providers may also attach receiving opportunity — projected targets, targets per
+route run, route participation, receiving share and red-zone targets per week, plus
+the observed recent target series per player. `apps/api/src/opportunity.ts` derives
+reception-point share, an archetype, pass-catching-back identification, target
+stability and the target trend from that workload and from points the league has
+already produced. Opportunity is never converted to points: a reception is scored
+once, by the league. The only projection it may change is a *supplied* floor
+scenario, moved toward its own mean by a bounded, disclosed fraction for a
+consistently targeted player; horizon preferences move waiver ranking scores by at
+most a documented cap, never projected points.
+
+Fictional demo view models are isolated from this pipeline by naming: they carry
+`illustrativePoints`, never a projection-shaped field, and are never mixed into a
+connected league's rankings.

@@ -6,7 +6,13 @@ export interface WaiverPlayer { id: string; name: string; positions: string[]; t
 export interface WaiverRecommendation {
   id: string; priority: number; add: WaiverPlayer; drop: WaiverPlayer | null;
   horizon: WaiverHorizon; risk: WaiverRisk; need: WaiverNeed; score: number;
-  projectedPoints: number; starterGain: number | null; benchGain: number | null;
+  /** League-scored points. `pointsExplanation` names the scoring; `contributions` itemizes it. */
+  projectedPoints: number;
+  pointsExplanation: string;
+  contributions: import('./projections.js').ScoringContribution[];
+  /** Receiving role behind the projection: workload, archetype, stability and the PPR premium. */
+  opportunity: import('./projections.js').OpportunityProfile | null;
+  starterGain: number | null; benchGain: number | null;
   starterComparison: WaiverPlayer | null; weakestBench: WaiverPlayer | null;
   dropCost: number | null; dropReason: string;
   upcoming: Array<{ week: number; opponent: string | null; bye: boolean; points: number | null }>;
@@ -16,6 +22,9 @@ export interface WaiverRecommendation {
 }
 export interface WaiverReport {
   scoring?: import('./scoring.js').ScoringConfiguration;
+  /** Provenance of every point below: which scoring observation scored which forecast, and when. */
+  scoringSnapshotId: string; scoringLabel: string; forecastUpdatedAt: string | null;
+  rejected: import('./projections.js').ForecastRejection[];
   leagueId: string; rosterId: number; week: number; season: string; generatedAt: string;
   rosterSyncedAt: string; source: { name: string; updatedAt: string } | null;
   status: 'ready' | 'partial' | 'unavailable'; warnings: string[];

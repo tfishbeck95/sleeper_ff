@@ -13,6 +13,16 @@ export interface TradeAsset {
   id: string; kind: 'player' | 'pick'; name: string; positions: string[];
   value: number; risk: number; explanation: string;
   age: number | null; careerYears: number | null;
+  /**
+   * How this player's raw stat forecast became points. Null for picks, which have no stat line.
+   * Model units above are derived from `weeklyPoints`; they are never a provider's own total.
+   */
+  scoring: {
+    snapshotId: string; label: string; weeklyPoints: number; explanation: string;
+    contributions: import('./projections.js').ScoringContribution[];
+  } | null;
+  /** Receiving role, including what this league's reception rule is specifically worth here. */
+  opportunity: import('./projections.js').OpportunityProfile | null;
 }
 export interface TradeLineup {
   legal: boolean; points: number;
@@ -43,6 +53,8 @@ export interface TradeCandidate extends TradeOffer {
 }
 export interface TradeReport {
   scoring?: import('./scoring.js').ScoringConfiguration;
+  scoringSnapshotId: string; scoringLabel: string; forecastUpdatedAt: string | null;
+  rejected: import('./projections.js').ForecastRejection[];
   leagueId: string; rosterId: number; week: number; format: 'redraft' | 'dynasty' | 'keeper';
   status: 'ready' | 'partial' | 'unavailable';
   source: { name: string; updatedAt: string } | null;

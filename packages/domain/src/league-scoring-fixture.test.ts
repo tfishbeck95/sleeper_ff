@@ -48,13 +48,17 @@ const STAT_LINES: Record<string, [Readonly<Record<string, number>>, number]> = {
 
 test('representative complete stat lines score to their hand-computed totals', () => {
   for (const [position, [line, expected]] of Object.entries(STAT_LINES)) assert.equal(points(line), expected, position);
-  const { explanation } = rules.score(STAT_LINES.QB[0]);
-  assert.match(explanation, /287 pass_yd × 0\.04 = 11\.48/);
-  assert.match(explanation, /2 pass_td × 4 = 8\.00/);
-  assert.match(explanation, /1 fum_lost × -2 = -2\.00/);
-  assert.equal(explanation.split('; ').length, Object.keys(STAT_LINES.QB[0]).length);
+  const { breakdown, explanation, contributions } = rules.score(STAT_LINES.QB[0]);
+  assert.match(breakdown, /287 pass_yd × 0\.04 = 11\.48/);
+  assert.match(breakdown, /2 pass_td × 4 = 8\.00/);
+  assert.match(breakdown, /1 fum_lost × -2 = -2\.00/);
+  assert.equal(breakdown.split('; ').length, Object.keys(STAT_LINES.QB[0]).length);
+  assert.equal(explanation, "26.9 points under your league's full-PPR scoring");
+  // Contributions are disclosed largest-first so a UI can show the drivers without re-sorting.
+  assert.deepEqual(contributions.slice(0, 2).map(c => c.stat), ['pass_yd', 'pass_td']);
+  assert.equal(contributions.length, Object.keys(STAT_LINES.QB[0]).length);
   // Statistics the league leaves at zero never appear as a contribution.
-  assert.equal(rules.score({ ...STAT_LINES.TE[0], bonus_rec_te: 6, rec_fd: 4 }).explanation.split('; ').length, 3);
+  assert.equal(rules.score({ ...STAT_LINES.TE[0], bonus_rec_te: 6, rec_fd: 4 }).breakdown.split('; ').length, 3);
 });
 
 test('passing touchdowns score four points, not the six carried by rushing and receiving', () => {
