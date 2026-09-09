@@ -19,21 +19,21 @@ async function fixture(provider?: WaiverSignalProvider) {
   const app = createApp(store, undefined, { syncLeague: async () => { calls++; } } as never, provider ?? { load: async () => input.signals });
   return { app, calls: () => calls };
 }
-const auth = (app: ReturnType<typeof createApp>, path: string) => request(app).get(path).set('Authorization', 'Bearer demo-token');
+const auth = async (app: ReturnType<typeof createApp>, path: string) => { process.env.ENABLE_DEMO_AUTH='true'; const login=await request(app).post('/auth/demo'); return request(app).get(path).set('Cookie',login.headers['set-cookie'][0].split(';')[0]); };
 test('trade API authenticates, validates bounds before sync and scopes owner/co-owner', async () => {
   const { app, calls } = await fixture();
-  assert.equal((await request(app).get('/api/trades/1234?week=8&userId=sample')).status, 401);
-  for (const query of ['week=8', 'week=0&userId=sample', 'week=8&week=9&userId=sample', 'week=8&userId=x&userId=y', 'week=8&userId=sample&maxRisk=NaN', 'week=8&userId=sample&maxResults=999', 'week=8&userId=sample&maxValueGap=-1', 'week=8&userId=sample&unknown=1']) assert.equal((await auth(app, `/api/trades/1234?${query}`)).status, 400, query);
+  assert.equal((await request(app).get('/api/trades/1234?week=8')).status, 401);
+  for (const query of ['week=0', 'week=8&week=9', 'week=8&maxRisk=NaN', 'week=8&maxResults=999', 'week=8&maxValueGap=-1', 'week=8&unknown=1']) assert.equal((await auth(app, `/api/trades/1234?${query}`)).status, 400, query);
   assert.equal(calls(), 0);
-  const owner = await auth(app, '/api/trades/1234?week=8&userId=sample&maxValueGap=0');
+  const owner = await auth(app, '/api/trades/1234?week=8&maxValueGap=0');
   assert.equal(owner.status, 200); assert.equal(owner.body.rosterId, 1); assert.ok(owner.body.candidates.length); assert.ok(owner.body.candidates.every((c: { valueGap: number }) => c.valueGap === 0));
-  assert.equal((await auth(app, '/api/trades/1234?week=8&userId=coowner')).body.rosterId, 1);
-  assert.equal((await auth(app, '/api/trades/1234?week=8&userId=stranger')).status, 403);
-  assert.equal((await request(app).post('/api/trades/1234').set('Authorization', 'Bearer demo-token')).status, 404);
+  assert.equal((await auth(app, '/api/trades/1234?week=8')).body.rosterId, 1);
+  assert.equal((await auth(app, '/api/trades/1234?week=8')).status, 403);
+  assert.equal((await request(app).post('/api/trades/1234')).status, 404);
 });
 test('missing provider returns unavailable without private errors; sample is explicit in both formats', async () => {
   const { app } = await fixture({ load: async () => { throw new Error('/private/provider.json failed'); } });
-  const live = await auth(app, '/api/trades/1234?week=8&userId=sample');
+  const live = await auth(app, '/api/trades/1234?week=8');
   assert.equal(live.status, 200); assert.equal(live.body.status, 'unavailable'); assert.deepEqual(live.body.candidates, []);
   assert.doesNotMatch(JSON.stringify(live.body), /private\/provider|Fictional/);
   for (const format of ['redraft', 'dynasty']) {

@@ -23,7 +23,7 @@ export function useLineupReport({ leagueId, userId, week, demo, force = false }:
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setReport(null); setError('');
-    const query = new URLSearchParams({ userId: userId ?? 'sample', week: String(week), force: String(force || retry > 0) });
+    const query = new URLSearchParams({ week: String(week), force: String(force || retry > 0) });
     request<LineupReport>(`/api/lineup/${encodeURIComponent(demo ? 'demo' : leagueId)}?${query}`, controller.signal)
       .then(value => { if (!controller.signal.aborted) { setReport(value); setLoading(false); } })
       .catch(reason => { if (!controller.signal.aborted) { setError(reason instanceof Error ? reason.message : 'Lineup analysis failed.'); setLoading(false); } });

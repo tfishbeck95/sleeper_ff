@@ -1,6 +1,6 @@
 # Lineup analysis and the scoring boundary
 
-`GET /api/lineup/:leagueId?userId=<Sleeper owner or co-owner ID>&week=8&force=false`
+`GET /api/lineup/:leagueId?week=8&force=false`
 
 The route uses the app's existing bearer token, synchronizes the league, then reads one consistent
 league/roster/player/matchup context. Invalid weeks return 400; accounts without a roster return 403.

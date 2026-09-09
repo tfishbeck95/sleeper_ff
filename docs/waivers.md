@@ -4,7 +4,7 @@ The API ranks independent add/drop alternatives for an owner or co-owner in the 
 
 ## API and data source
 
-`GET /api/waivers/:leagueId?userId=<Sleeper user ID>&week=8&force=false` uses the existing bearer authentication. Invalid weeks return 400; accounts without a roster return 403. The public Sleeper user ID selects a roster; it is not an identity credential. This app retains its existing single-token local authentication model.
+`GET /api/waivers/:leagueId?week=8&force=false` uses application session authentication. Invalid weeks return 400; accounts without a roster return 403. The server selects the roster from the Sleeper identity linked to the authenticated application user; callers cannot select another user with a query parameter.
 
 The endpoint synchronizes the selected league using the existing cache intervals, then reads one consistent stored league/roster/player context. `force=true` refreshes upstream data. A failed Sleeper sync fails the request rather than serving seemingly current availability. Injury designations are now preserved by the player normalizer. The player directory normally refreshes daily; Recheck forces a refresh, so use it judiciously.
 
