@@ -6,6 +6,8 @@ import { recommendWaivers } from './waivers.js';
 import { demoWaiverInput } from './waiver-demo.js';
 import { parseTradeBounds, recommendTrades } from './trades.js';
 import { demoTradeInput } from './trade-demo.js';
+import { analyzeLineup } from './lineup.js';
+import { demoLineupInput } from './lineup-demo.js';
 export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync = new LeagueSyncService(store, sleeper), signals: WaiverSignalProvider = new FileWaiverSignalProvider()) { const app=express(); app.use(cors({origin:process.env.WEB_ORIGIN ?? 'http://localhost:5173'})); app.use(express.json());
  app.get('/health',(_req,res)=>res.json({status:'ok'}));
  app.use('/api',(req,res,next)=>{const auth=req.header('authorization'); if(auth!==`Bearer ${process.env.DEMO_TOKEN ?? 'demo-token'}`) return res.status(401).json({error:'Unauthorized'}); next();});
@@ -32,6 +34,27 @@ export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync 
      let forecast = null;
      try { forecast = await signals.load(context.league.season, week); } catch { /* Report unavailable without leaking provider paths. */ }
      return res.json(recommendTrades({ ...context, league: context.league, rosterId: roster.rosterId, week, signals: forecast, bounds }));
+   } catch (error) { next(error); }
+ });
+ app.get('/api/lineup/:leagueId', async (req, res, next) => {
+   try {
+     if (req.params.leagueId === 'demo') return res.json(analyzeLineup(demoLineupInput()));
+     const week = Number(req.query.week), userId = req.query.userId;
+     if (typeof req.query.week !== 'string' || !Number.isInteger(week) || week < 1 || week > 18 || typeof userId !== 'string' || !userId.trim()) return res.status(400).json({ error: 'Provide userId and an integer week from 1 to 18.' });
+     try { await sync.syncLeague(req.params.leagueId, week, req.query.force === 'true'); } catch (error) {
+       if ((await store.league(req.params.leagueId))?.scoring?.kind !== 'unavailable') throw error;
+     }
+     const league = await store.league(req.params.leagueId);
+     if (!league) return res.status(404).json({ error: 'League not synced.' });
+     const context = await store.lineupContext(req.params.leagueId, league.season, week);
+     const roster = context.rosters.find(r => r.ownerId === userId || r.coOwnerIds.includes(userId));
+     if (!roster) return res.status(403).json({ error: 'This account does not own or co-own a roster in the selected league.' });
+     let forecast = null;
+     let sourceError = false;
+     try { forecast = await signals.load(league.season, week); } catch { sourceError = true; }
+     const report = analyzeLineup({ ...context, league, rosterId: roster.rosterId, week, signals: forecast });
+     if (sourceError) report.warnings.push('The forecast source could not be loaded or failed validation. Lineup analysis is unavailable until the source is repaired.');
+     return res.json(report);
    } catch (error) { next(error); }
  });
  app.get('/api/waivers/:leagueId', async (req, res, next) => {

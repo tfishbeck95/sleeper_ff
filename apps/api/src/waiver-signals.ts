@@ -1,8 +1,13 @@
 import { readFile } from 'node:fs/promises';
 
-/** Raw baseline stat forecasts: the pipeline applies league scoring, role and matchup adjustments. */
+/**
+ * Raw baseline stat forecasts: the pipeline applies league scoring, role and matchup adjustments.
+ * A provider never supplies fantasy points. `stats` is the mean scenario; `floorStats`/`ceilingStats`
+ * are optional low/high raw-stat scenarios scored by exactly the same league rules.
+ */
 export interface WeeklyForecast {
   week: number; stats: Record<string, number>;
+  floorStats?: Record<string, number>; ceilingStats?: Record<string, number>;
   opponent?: string; bye?: boolean;
   /** 1 is neutral; use only for matchup effects not already in the baseline forecast. */
   matchupMultiplier?: number;
@@ -48,6 +53,8 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
     const weeks = new Set<number>();
     for (const w of p.weeks) {
       if (!object(w) || !weekNumber(w.week) || weeks.has(w.week) || !stats(w.stats) || (w.opponent !== undefined && typeof w.opponent !== 'string') || (w.bye !== undefined && typeof w.bye !== 'boolean') || (w.matchupMultiplier !== undefined && (!finite(w.matchupMultiplier) || w.matchupMultiplier < .5 || w.matchupMultiplier > 1.5))) throw new Error('Invalid or duplicate weekly waiver forecast.');
+      // Scenarios are raw stat lines, never a pre-scored range: they are scored by the same league rules.
+      for (const key of ['floorStats', 'ceilingStats']) if (w[key] !== undefined && !stats(w[key])) throw new Error('Invalid floor or ceiling stat scenario.');
       weeks.add(w.week);
     }
     if (p.dynastyStats !== undefined && !stats(p.dynastyStats)) throw new Error('Invalid dynasty forecast.');

@@ -1,4 +1,5 @@
-import { referenceScoring, scoringUnavailable, type ScoringConfiguration } from './scoring.js';
+import { referenceScoring, scoringFormatLabel, scoringSnapshotId, scoringUnavailable, type ScoringConfiguration } from './scoring.js';
+import type { ScoredPoints, ScoringContribution } from './projections.js';
 import type { League, RosterPosition, ScoringSetting } from './index.js';
 
 export type LineupPosition = 'QB' | 'RB' | 'WR' | 'TE' | 'K' | 'DEF' | 'DL' | 'LB' | 'DB' | 'IDP' | 'FLEX' | 'SUPER_FLEX' | 'REC_FLEX' | string;
@@ -7,10 +8,19 @@ export type LeagueFormat = 'dynasty' | 'keeper' | 'redraft';
 export interface ScoringRules {
   configuration: ScoringConfiguration;
   actionable: boolean;
+  /** Identifies the observation these points came from; scored projections must carry it forward. */
+  snapshotId: string;
+  /** Manager-facing scoring name, e.g. `full-PPR`. */
+  label: string;
   settings: Readonly<Record<string, number>>;
   receptionPoints: number | null;
   receptionFormat: 'standard' | 'half-ppr' | 'ppr' | 'custom' | 'unknown';
-  score(stats: Readonly<Record<string, number>>): { points: number; explanation: string };
+  /** True when this league's own rules define the statistic, so a raw amount has a known unit. */
+  knows(stat: string): boolean;
+  /** Applies this league's rules to a raw stat line. The only way fantasy points enter the system. */
+  score(stats: Readonly<Record<string, number>>): ScoredPoints;
+  /** `18.4 points under your league's full-PPR scoring`. */
+  describe(points: number): string;
 }
 
 export interface RosterRules {
@@ -53,19 +63,26 @@ export function interpretScoring(settings: readonly ScoringSetting[] | Readonly<
   const rates = config.settings ?? {};
   const receptionPoints = rates.rec ?? (config.kind === 'complete-live' ? 0 : null);
   const receptionFormat = receptionPoints === null ? 'unknown' : receptionPoints === 0 ? 'standard' : receptionPoints === .5 ? 'half-ppr' : receptionPoints === 1 ? 'ppr' : 'custom';
+  const label = scoringFormatLabel(config);
+  const describe = (points: number) => `${points.toFixed(1)} points under your league's ${label} scoring`;
   return {
     settings: rates, configuration: config, actionable: config.kind === 'complete-live', receptionPoints, receptionFormat,
+    snapshotId: scoringSnapshotId(config), label, describe,
+    knows(stat) { return Object.hasOwn(rates, stat); },
     score(stats) {
       if (config.kind !== 'complete-live') throw new Error('A validated complete live scoring configuration is required.');
-      const contributions = Object.entries(stats).flatMap(([stat, amount]) => {
+      const contributions: ScoringContribution[] = Object.entries(stats).flatMap(([stat, amount]) => {
         const rate = rates[stat] ?? 0; const points = amount * rate;
         return points === 0 ? [] : [{ stat, amount, rate, points }];
       });
-      const points = contributions.reduce((sum, value) => sum + value.points, 0);
-      const explanation = contributions.length
+      const total = contributions.reduce((sum, value) => sum + value.points, 0);
+      const breakdown = contributions.length
         ? contributions.map(v => `${v.amount} ${v.stat} × ${v.rate} = ${v.points.toFixed(2)}`).join('; ')
         : 'No supplied statistics have a non-zero scoring rule.';
-      return { points: Math.round(points * 100) / 100, explanation };
+      const points = Math.round(total * 100) / 100;
+      // Largest drivers first: callers disclose the leading contributions without re-sorting.
+      const ordered = [...contributions].sort((a, b) => Math.abs(b.points) - Math.abs(a.points) || a.stat.localeCompare(b.stat));
+      return { points, explanation: describe(points), breakdown, contributions: ordered };
     },
   };
 }

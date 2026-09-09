@@ -59,3 +59,20 @@ export function scoringSummary(config: ScoringConfiguration): string {
   const rec = s.rec === 1 ? 'PPR' : s.rec === .5 ? 'Half PPR' : s.rec === 0 ? 'Non-PPR' : s.rec == null ? 'Reception scoring unknown' : `${s.rec} per reception`;
   return `${config.kind === 'partial-reference' ? 'Partial reference · ' : ''}${rec} · Pass TD ${s.pass_td ?? '?'} · Rush/rec TD ${s.rush_td ?? '?'}/${s.rec_td ?? '?'} · ${Object.keys(s).length} rules`;
 }
+/** Reception-format label used wherever a league-scored total is explained to a manager. */
+export function scoringFormatLabel(config: ScoringConfiguration): string {
+  if (config.kind === 'unavailable') return 'unscored';
+  const rec = config.settings.rec;
+  return rec == null ? 'custom' : rec === 1 ? 'full-PPR' : rec === .5 ? 'half-PPR' : rec === 0 ? 'non-PPR' : `${rec}-point-reception`;
+}
+/**
+ * Stable identifier for one scoring observation. Every scored projection carries it, so a ranking can
+ * prove which snapshot produced its points and a commissioner's change invalidates earlier scoring.
+ */
+export function scoringSnapshotId(config: ScoringConfiguration): string {
+  const rules = config.settings ? Object.keys(config.settings).sort().map(key => `${key}=${config.settings![key]}`).join('|') : '';
+  const material = `${config.kind} ${config.synchronizedAt ?? ''} ${rules}`;
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < material.length; index++) { hash ^= material.charCodeAt(index); hash = Math.imul(hash, 0x01000193) >>> 0; }
+  return `${config.kind}:${config.synchronizedAt ?? 'unsynchronized'}:${hash.toString(16).padStart(8, '0')}`;
+}

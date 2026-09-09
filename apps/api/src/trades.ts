@@ -1,5 +1,6 @@
-import { interpretLeagueRules, type TradeAsset, type TradeBounds, type TradeCandidate, type TradeNeed, type TradeOffer, type TradeReport, type TradeStrategy, type TradeTeamEvaluation, type TradeTeamImpact, type TradedDraftPick, type User } from '@sleeper/domain';
+import { interpretLeagueRules, scoringFormatLabel, type TradeAsset, type TradeBounds, type TradeCandidate, type TradeNeed, type TradeOffer, type TradeReport, type TradeStrategy, type TradeTeamEvaluation, type TradeTeamImpact, type TradedDraftPick, type User } from '@sleeper/domain';
 import { parseWaiverSignals, type PlayerSignal } from './waiver-signals.js';
+import { scoreLeagueForecasts, TRADE_UNAVAILABLE_STATUSES, weekPoints } from './projection-scoring.js';
 import type { WaiverInput } from './waivers.js';
 import { optimizeTradeLineup } from './trade-lineup.js';
 
@@ -19,7 +20,7 @@ export function parseTradeBounds(value: unknown): TradeBounds {
 const round = (v: number) => Math.round(v * 100) / 100;
 const sum = (v: number[]) => v.reduce((a, b) => a + b, 0);
 const mean = (v: number[]) => v.length ? sum(v) / v.length : 0;
-const unavailable = (s?: string | null) => ['out', 'ir', 'pup', 'suspended', 'inactive', 'injured reserve', 'retired'].includes((s ?? '').toLowerCase());
+const unavailable = (s?: string | null) => TRADE_UNAVAILABLE_STATUSES.includes((s ?? '').toLowerCase());
 const ids = (r: WaiverInput['rosters'][number]) => [...new Set([...r.playerIds, ...r.starterIds, ...r.reserveIds, ...r.taxiIds].filter(id => id && id !== '0'))];
 
 /** Model units, not market prices. Age adjustment and discounted career horizon are explicit heuristics. */
@@ -36,8 +37,10 @@ export function valueTradePlayer(signal: PlayerSignal, ros: number, future: numb
 export function recommendTrades(input: TradeInput): TradeReport {
   const { league, week } = input, rules = interpretLeagueRules(league), dynasty = rules.format === 'dynasty';
   const bounds = parseTradeBounds(input.bounds ?? {}), now = input.now ?? new Date();
-  const report: TradeReport = { leagueId: league.id, rosterId: input.rosterId, week, format: rules.format, bounds, scoring: rules.scoring.configuration, status: 'unavailable', source: null, warnings: [], teams: [], candidates: [],
-    methodology: 'Forecast-based model units, not market prices or acceptance odds. Fairness checks neutral package balance and each manager’s strategy-adjusted value. Needs use league-relative position strength, depth and dynasty longevity/capital. Contention is a heuristic from projected strength and record; manager preferences remain unknown.' };
+  const report: TradeReport = { leagueId: league.id, rosterId: input.rosterId, week, format: rules.format, bounds, scoring: rules.scoring.configuration,
+    scoringSnapshotId: rules.scoring.snapshotId, scoringLabel: scoringFormatLabel(rules.scoring.configuration), forecastUpdatedAt: null, rejected: [],
+    status: 'unavailable', source: null, warnings: [], teams: [], candidates: [],
+    methodology: 'Model units derived from this league’s own scoring applied to raw stat forecasts, not market prices, acceptance odds or a provider’s fantasy-point totals. Fairness checks neutral package balance and each manager’s strategy-adjusted value. Needs use league-relative position strength, depth and dynasty longevity/capital. Contention is a heuristic from projected strength and record; manager preferences remain unknown.' };
   const fail = (message: string) => { report.warnings.push(message); return report; };
   if (!rules.scoring.actionable) { report.warnings.push('Validated complete live scoring is required. Lineup, waiver and trade rankings are unavailable.', ...rules.scoring.configuration.issues.map(issue => issue.message)); return report; }
   const rosters = input.rosters.filter(r => r.leagueId === league.id);
@@ -51,6 +54,7 @@ export function recommendTrades(input: TradeInput): TradeReport {
   try { signals = input.signals && parseWaiverSignals(input.signals); } catch { return fail('Forecast validation failed. Repair the source before evaluating trades.'); }
   if (!signals || signals.season !== league.season || signals.week !== week) return fail('A matching forecast source is required. No sample values are used for connected leagues.');
   report.source = { name: signals.source, updatedAt: signals.updatedAt };
+  report.forecastUpdatedAt = signals.updatedAt;
   const sourceAge = now.getTime() - Date.parse(signals.updatedAt);
   if (sourceAge > 48 * 60 * 60_000 || sourceAge < -5 * 60_000) return fail('Forecasts are stale or future-dated. Refresh the source before evaluating trades.');
   if (rosters.some(r => !Number.isFinite(Date.parse(r.synchronizedAt)) || now.getTime() - Date.parse(r.synchronizedAt) > 10 * 60_000 || now.getTime() - Date.parse(r.synchronizedAt) < -5 * 60_000)) return fail('Roster ownership is stale or unverified. Refresh every roster before generating trades.');
@@ -62,25 +66,32 @@ export function recommendTrades(input: TradeInput): TradeReport {
   const meta = new Map(input.players.map(p => [p.id, p])), forecasts = new Map(signals.players.map(s => [s.playerId, s]));
   const allRostered = rosters.flatMap(ids);
   if (new Set(allRostered).size !== allRostered.length) return fail('A player appears on multiple rosters; ownership must be repaired first.');
+  // The single input boundary: raw stat forecasts become league-scored points exactly once, here.
+  // Trade valuation is conservative, so an undated absence removes a player for the whole horizon.
+  const scored = scoreLeagueForecasts({
+    rules: rules.scoring, signals, players: input.players, requiredWeeks: weeks,
+    availability: { policy: 'entire-horizon', statuses: TRADE_UNAVAILABLE_STATUSES }, scoredAt: now,
+  });
+  report.rejected = scored.rejected;
+  if (scored.rejected.length) report.warnings.push(`${scored.rejected.length} projection(s) were refused because their raw-stat units, player identity or scenario consistency could not be validated. They are excluded rather than valued at zero.`);
   const players = new Map<string, { asset: TradeAsset; signal: PlayerSignal; weekly: Map<number, number>; ros: number; future: number }>();
   for (const id of allRostered) {
-    const p = meta.get(id), s = forecasts.get(id);
-    const positions = p?.fantasyPositions.length ? p.fantasyPositions : p?.position ? [p.position] : [];
-    if (!p || !s || !positions.length || weeks.some(w => !s.weeks.some(f => f.week === w && typeof f.bye === 'boolean')) || (dynasty && (s.age == null || s.expectedCareerYears == null || !s.dynastyStats))) return fail(`Incomplete roster forecasts${dynasty ? ', age or career horizons' : ''}. Every rostered player needs remaining-week stats and explicit bye flags.`);
-    const weekly = new Map(weeks.map(w => {
-      const f = s.weeks.find(f => f.week === w)!;
-      const status = s.injuryStatus ?? p.injuryStatus ?? p.status;
-      // Without a supplied return week, unavailable players are conservatively unavailable throughout.
-      const out = s.unavailableThroughWeek != null ? w <= s.unavailableThroughWeek : unavailable(status);
-      const role = s.role ? 1 + Math.max(-.15, Math.min(.15, (s.role.recentShare - s.role.previousShare) * .5)) : 1;
-      return [w, f.bye || out ? 0 : rules.scoring.score(f.stats).points * (f.matchupMultiplier ?? 1) * role];
-    }));
-    const ros = mean([...weekly.values()]), future = s.dynastyStats ? rules.scoring.score(s.dynastyStats).points : 0;
+    const p = meta.get(id), s = forecasts.get(id), value_ = scored.byPlayerId.get(id);
+    const positions = value_?.positions ?? [];
+    if (!p || !s || !value_ || !positions.length || (dynasty && (s.age == null || s.expectedCareerYears == null || !s.dynastyStats))) {
+      const refusal = scored.rejected.find(rejection => rejection.playerId === id);
+      if (refusal) report.warnings.push(refusal.message);
+      return fail(`Incomplete roster forecasts${dynasty ? ', age or career horizons' : ''}. Every rostered player needs remaining-week stats and explicit bye flags.`);
+    }
+    const weekly = new Map(weeks.map(w => [w, value_.weeks.find(f => f.week === w)!.points]));
+    const ros = mean([...weekly.values()]), future = value_.dynasty?.points ?? 0;
     const risk = Math.max(s.uncertainty ?? .35, unavailable(s.injuryStatus ?? p.injuryStatus ?? p.status) ? .8 : (s.injuryStatus ?? p.injuryStatus) ? .45 : 0);
     const value = valueTradePlayer(s, ros, future, dynasty);
     if (![...weekly.values(), value, future].every(Number.isFinite)) return fail('A forecast produced a nonfinite score.');
+    const current = value_.weeks.find(f => f.week === week)!;
     const asset: TradeAsset = { id, kind: 'player', name: p.fullName, positions, value: round(value), risk, age: s.age ?? null, careerYears: s.expectedCareerYears ?? null,
-      explanation: dynasty ? `Age ${s.age}; expected career ${s.expectedCareerYears} years. ${round(ros)} remaining-week points and ${round(future)} future typical-week points; age-adjusted career discounted 18% per year, capped at five years. Current production weight: contender 65%, balanced 40%, rebuilder 20%.` : `${round(ros)} average remaining-week points under league scoring, including byes and known absences. No age or draft-pick premium.` };
+      explanation: dynasty ? `Age ${s.age}; expected career ${s.expectedCareerYears} years. ${round(ros)} remaining-week points and ${round(future)} future typical-week points under your league's ${report.scoringLabel} scoring; age-adjusted career discounted 18% per year, capped at five years. Current production weight: contender 65%, balanced 40%, rebuilder 20%.` : `${round(ros)} average remaining-week points under your league's ${report.scoringLabel} scoring, including byes and known absences. No age or draft-pick premium.`,
+      scoring: { snapshotId: value_.scoringSnapshotId, label: report.scoringLabel, weeklyPoints: round(current.points), ...(({ explanation, contributions }) => ({ explanation, contributions }))(weekPoints(rules.scoring, current)) } };
     players.set(id, { asset, signal: s, weekly, ros, future });
   }
   const canPlay = (id: string, w: number) => {
@@ -107,7 +118,7 @@ export function recommendTrades(input: TradeInput): TradeReport {
         const key = `${draft.season}:${roundNumber}:${r.rosterId}`, owner = transfers.get(key)?.ownerId ?? r.rosterId;
         // Mid-round model units: original team's future finish is unknown, not extrapolated from one season.
         const value = 18 / roundNumber ** 1.35 * .85 ** (years - 1);
-        picksByRoster.get(owner)!.push({ id: `pick:${key}`, kind: 'pick', name: `${draft.season} round ${roundNumber} rookie pick (roster ${r.rosterId})`, positions: [], value: round(value), risk: .55, age: null, careerYears: null, explanation: `Currently owned by roster ${owner}. Mid-round heuristic, discounted 15% per future year. Final pick slot, rookie class strength and development are unknown.` });
+        picksByRoster.get(owner)!.push({ id: `pick:${key}`, kind: 'pick', name: `${draft.season} round ${roundNumber} rookie pick (roster ${r.rosterId})`, positions: [], value: round(value), risk: .55, age: null, careerYears: null, scoring: null, explanation: `Currently owned by roster ${owner}. Mid-round heuristic, discounted 15% per future year. Final pick slot, rookie class strength and development are unknown. A pick has no stat line, so no league scoring applies.` });
       }
     }
   }

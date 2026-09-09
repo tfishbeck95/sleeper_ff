@@ -33,6 +33,15 @@ export class JsonStore {
     const data = await this.read();
     return { league: data.leagues[leagueId], rosters: Object.values(data.rosters).filter(r => r.leagueId === leagueId), players: Object.values(data.players) };
   }
+  /** Lineup analysis additionally needs the week's matchups to identify the scheduled opponent. */
+  async lineupContext(leagueId: string, season: string, week: number) {
+    const data = await this.read();
+    return {
+      league: data.leagues[leagueId], rosters: Object.values(data.rosters).filter(r => r.leagueId === leagueId),
+      players: Object.values(data.players), users: Object.values(data.users),
+      matchups: Object.values(data.matchups).filter(m => m.leagueId === leagueId && m.season === season && m.week === week),
+    };
+  }
   async tradeContext(leagueId: string) {
     const data = await this.read();
     const pickAge = Date.now() - Date.parse(data.freshness[`draftPicks:${leagueId}`]);

@@ -1,0 +1,181 @@
+import type {
+  ForecastRejection, ForecastRejectionKind, NflPlayer, ScoredForecastSet, ScoredPlayerForecast,
+  ScoredPoints, ScoredWeek, ScoringRules,
+} from '@sleeper/domain';
+import { scoringSummary } from '@sleeper/domain';
+import type { PlayerSignal, WaiverSignals, WeeklyForecast } from './waiver-signals.js';
+
+/**
+ * The lineup-analysis input boundary.
+ *
+ * Every ranking in this application consumes fantasy points produced here and nowhere else. A
+ * forecast provider supplies raw projected statistics plus optional floor/ceiling raw-stat
+ * scenarios; this module applies the synchronized league's own `ScoringRules` to each of them,
+ * records the scoring snapshot and forecast timestamp on the result, and refuses any projection
+ * whose player identity or raw-stat units cannot be validated. A refused projection is reported,
+ * never defaulted to zero and never passed through as an unexplained points value.
+ */
+
+/** Keys a provider must never send: a pre-scored total cannot be re-derived under this league's rules. */
+export const PRE_SCORED_KEYS: readonly string[] = ['points', 'projectedpoints', 'projected_points', 'fantasypoints', 'fantasy_points', 'fpts', 'pts', 'proj', 'projection', 'score'];
+/** Injury designations that zero a forecast. Trade valuation additionally treats `retired` as absent. */
+export const WAIVER_UNAVAILABLE_STATUSES: readonly string[] = ['out', 'ir', 'pup', 'suspended', 'inactive', 'injured reserve'];
+export const TRADE_UNAVAILABLE_STATUSES: readonly string[] = [...WAIVER_UNAVAILABLE_STATUSES, 'retired'];
+
+export interface AvailabilityPolicy {
+  /**
+   * `selected-week` matches waiver streaming: an injury designation with no supplied return week
+   * zeroes only the selected week. `entire-horizon` matches trade valuation: the same designation
+   * conservatively zeroes every forecast week. An explicit `unavailableThroughWeek` always applies.
+   */
+  policy: 'selected-week' | 'entire-horizon';
+  selectedWeek?: number;
+  statuses?: readonly string[];
+}
+export interface ScoreForecastsInput {
+  rules: ScoringRules;
+  signals: WaiverSignals;
+  /** Synchronized Sleeper player directory. A forecast that does not resolve here is refused. */
+  players: readonly NflPlayer[];
+  /** Weeks the caller needs covered. A player missing one is refused, never zero-filled. */
+  requiredWeeks?: readonly number[];
+  availability?: AvailabilityPolicy;
+  scoredAt?: Date;
+}
+/** A scored forecast plus the API-internal source records the ranking engines still need. */
+export interface ScoredPlayer extends ScoredPlayerForecast {
+  signal: PlayerSignal; player: NflPlayer;
+}
+export interface ScoredForecasts extends ScoredForecastSet {
+  players: ScoredPlayer[];
+  byPlayerId: Map<string, ScoredPlayer>;
+}
+
+const positionsOf = (player: NflPlayer) => player.fantasyPositions.length ? player.fantasyPositions : player.position ? [player.position] : [];
+const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
+export const roleMultiplier = (signal: PlayerSignal) => 1 + (signal.role ? clamp((signal.role.recentShare - signal.role.previousShare) * .5, -.15, .15) : 0);
+
+/** Applies the league's validated rules to every supplied raw forecast. */
+export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecasts {
+  const { rules, signals, players } = input;
+  if (!rules.actionable) throw new Error('Forecasts can only be scored by a validated complete live scoring snapshot.');
+  const scoredAt = (input.scoredAt ?? new Date()).toISOString();
+  const availability = input.availability ?? { policy: 'selected-week' as const };
+  const statuses = availability.statuses ?? WAIVER_UNAVAILABLE_STATUSES;
+  const absent = (status?: string | null) => statuses.includes((status ?? '').toLowerCase());
+  const directory = new Map(players.map(player => [player.id, player]));
+  const required = [...new Set(input.requiredWeeks ?? [])];
+  const rejected: ForecastRejection[] = [];
+  const scored: ScoredPlayer[] = [];
+  const seen = new Set<string>();
+
+  for (const signal of signals.players) {
+    const refuse = (kind: ForecastRejectionKind, message: string) => { rejected.push({ playerId: signal.playerId, kind, message }); return null; };
+    const player = directory.get(signal.playerId);
+    // 1. Player identity. An unverifiable subject makes its points meaningless, however well formed.
+    if (seen.has(signal.playerId)) { refuse('identity', `${signal.playerId}: duplicate forecast; no projection can be treated as authoritative.`); continue; }
+    seen.add(signal.playerId);
+    if (!player) { refuse('identity', `${signal.playerId}: no synchronized Sleeper player has this ID, so the projection cannot be attributed.`); continue; }
+    const positions = positionsOf(player);
+    if (!positions.length) { refuse('identity', `${player.fullName || signal.playerId}: no fantasy position is known, so lineup eligibility cannot be validated.`); continue; }
+    if (!player.fullName.trim()) { refuse('identity', `${signal.playerId}: the synchronized player record has no name.`); continue; }
+
+    // 2. Raw-stat units. Every supplied key must be a statistic this league's own rules define.
+    const lines: Array<[string, Record<string, number> | undefined]> = [
+      ...signal.weeks.flatMap((week): Array<[string, Record<string, number> | undefined]> => [
+        [`week ${week.week}`, week.stats], [`week ${week.week} floor`, week.floorStats], [`week ${week.week} ceiling`, week.ceilingStats],
+      ]),
+      ['the dynasty typical week', signal.dynastyStats],
+    ];
+    let invalid: string | null = null;
+    let preScored = false;
+    for (const [where, line] of lines) {
+      if (!line || invalid) continue;
+      for (const [stat, amount] of Object.entries(line)) {
+        if (PRE_SCORED_KEYS.includes(stat.toLowerCase())) { invalid = `${player.fullName}: ${where} supplies "${stat}", a pre-scored fantasy total. Provide raw statistics; this league scores them.`; preScored = true; break; }
+        if (!Number.isFinite(amount)) { invalid = `${player.fullName}: ${where} supplies a nonfinite "${stat}".`; break; }
+        if (!rules.knows(stat)) { invalid = `${player.fullName}: ${where} supplies "${stat}", which this league's scoring rules do not define, so its unit cannot be validated.`; break; }
+      }
+    }
+    if (invalid) { refuse(preScored ? 'pre-scored' : 'units', invalid); continue; }
+
+    // 3. Coverage the caller declared it needs. Missing weeks are refused rather than assumed empty.
+    const missing = required.filter(week => !signal.weeks.some(forecast => forecast.week === week && typeof forecast.bye === 'boolean'));
+    if (missing.length) { refuse('coverage', `${player.fullName}: week ${missing.join(', ')} forecasts with explicit bye flags are missing.`); continue; }
+
+    // 4. Score every scenario with the same rule set, then apply and disclose post-scoring adjustments.
+    const role = roleMultiplier(signal);
+    const status = signal.injuryStatus ?? player.injuryStatus ?? player.status;
+    const weeks: ScoredWeek[] = [];
+    for (const forecast of [...signal.weeks].sort((a, b) => a.week - b.week)) {
+      const week = scoreWeek(rules, signal, forecast, { role, status, absent, availability });
+      // An inconsistent optional scenario is discarded and reported. It never silently widens a range,
+      // and it never invalidates the mean, whose units and identity did validate.
+      if (week.floor && week.floor.points > week.mean.points + 1e-9) {
+        refuse('scenario', `${player.fullName}: the week ${forecast.week} floor stat line scores above its mean under this league's rules, so the floor is discarded. The mean projection is unaffected.`);
+        week.floor = null; week.floorPoints = null;
+      }
+      if (week.ceiling && week.ceiling.points + 1e-9 < week.mean.points) {
+        refuse('scenario', `${player.fullName}: the week ${forecast.week} ceiling stat line scores below its mean under this league's rules, so the ceiling is discarded. The mean projection is unaffected.`);
+        week.ceiling = null; week.ceilingPoints = null;
+      }
+      weeks.push(week);
+    }
+
+    scored.push({
+      playerId: signal.playerId, name: player.fullName, positions, team: player.team,
+      injuryStatus: status ?? null, age: signal.age ?? null, weeks,
+      dynasty: signal.dynastyStats ? rules.score(signal.dynastyStats) : null,
+      scoringSnapshotId: rules.snapshotId, forecastUpdatedAt: signals.updatedAt,
+      signal, player,
+    });
+  }
+  return {
+    scoringSnapshotId: rules.snapshotId, scoringLabel: rules.label, scoringSummary: scoringSummary(rules.configuration),
+    forecastSource: signals.source, forecastUpdatedAt: signals.updatedAt, scoredAt,
+    players: scored, rejected, byPlayerId: new Map(scored.map(value => [value.playerId, value])),
+  };
+}
+
+function scoreWeek(
+  rules: ScoringRules, signal: PlayerSignal, forecast: WeeklyForecast,
+  context: { role: number; status?: string | null; absent(status?: string | null): boolean; availability: AvailabilityPolicy },
+): ScoredWeek {
+  const mean = rules.score(forecast.stats);
+  const floor = forecast.floorStats ? rules.score(forecast.floorStats) : null;
+  const ceiling = forecast.ceilingStats ? rules.score(forecast.ceilingStats) : null;
+  const bye = forecast.bye === true;
+  const dated = signal.unavailableThroughWeek != null && forecast.week <= signal.unavailableThroughWeek;
+  const designated = context.absent(context.status);
+  const out = context.availability.policy === 'entire-horizon'
+    ? (signal.unavailableThroughWeek != null ? dated : designated)
+    : dated || (forecast.week === context.availability.selectedWeek && designated);
+  const matchup = forecast.matchupMultiplier ?? 1;
+  const adjustments: string[] = [];
+  if (bye) adjustments.push(`Week ${forecast.week} is a bye, so the league-scored forecast is zeroed.`);
+  else if (out) adjustments.push(dated ? `Unavailable through week ${signal.unavailableThroughWeek}, so the league-scored forecast is zeroed.` : `Availability "${context.status}" zeroes the league-scored forecast for week ${forecast.week}.`);
+  else {
+    if (matchup !== 1) adjustments.push(`Opponent adjustment ${matchup} applied after league scoring.`);
+    if (context.role !== 1) adjustments.push(`Role trend adjustment ${Math.round((context.role - 1) * 1000) / 10}% applied after league scoring.`);
+  }
+  const multiplier = bye || out ? 0 : matchup * context.role;
+  return {
+    week: forecast.week, bye, opponent: forecast.opponent ?? null,
+    mean, floor, ceiling, multiplier, adjustments,
+    points: mean.points * multiplier,
+    floorPoints: floor ? floor.points * multiplier : null,
+    ceilingPoints: ceiling ? ceiling.points * multiplier : null,
+  };
+}
+
+/** The league-scored value a lineup consumes for one week, with its explanation preserved. */
+export function weekPoints(rules: ScoringRules, week: ScoredWeek): ScoredPoints {
+  if (week.multiplier === 1) return week.mean;
+  const points = Math.round(week.mean.points * week.multiplier * 100) / 100;
+  return {
+    points,
+    explanation: `${rules.describe(points)}${week.adjustments.length ? ` (${week.adjustments.join(' ')})` : ''}`,
+    breakdown: week.multiplier === 0 ? `${week.mean.breakdown} — zeroed: ${week.adjustments.join(' ')}` : `${week.mean.breakdown}; adjusted by ${Math.round(week.multiplier * 1000) / 1000}`,
+    contributions: week.mean.contributions.map(value => ({ ...value, points: value.points * week.multiplier })),
+  };
+}

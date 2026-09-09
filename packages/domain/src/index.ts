@@ -1,5 +1,6 @@
 import type { ScoringConfiguration } from './scoring.js';
 export * from './scoring.js';
+export * from './projections.js';
 export * from './waivers.js';
 export * from './trades.js';
 /** Timestamps carried by every record imported from Sleeper. */
@@ -53,18 +54,17 @@ export interface WeeklySnapshot extends SourceMetadata {
   rosters: Roster[]; matchups: Matchup[]; scoring?: ScoringConfiguration;
 }
 
-// Dashboard view models remain intentionally separate from normalized persistence models.
+/**
+ * Illustrative demo view models. These are deliberately isolated from every ranking path: their
+ * points are not produced by any league's scoring rules, so they carry `illustrativePoints` rather
+ * than a name a ranking could mistake for a league-scored projection. Lineup, waiver and trade
+ * analysis consume `ScoredPoints` from the scoring boundary and never these models.
+ */
 export type Position = 'QB' | 'RB' | 'WR' | 'TE' | 'K' | 'DEF';
 export type Trend = 'up' | 'down' | 'steady';
-export interface Player { id: string; name: string; team: string; position: Position; projectedPoints: number; trend: Trend; }
-export interface DashboardMatchup { week: number; opponent: string; projectedFor: number; projectedAgainst: number; }
+export interface Player { id: string; name: string; team: string; position: Position; illustrativePoints: number; trend: Trend; }
+export interface DashboardMatchup { week: number; opponent: string; illustrativeFor: number; illustrativeAgainst: number; }
 export interface Recommendation { id: string; kind: 'start' | 'waiver' | 'trade'; title: string; rationale: string; confidence: number; player?: Player; actionLabel: string; }
 export interface LeagueSnapshot { leagueId: string; leagueName: string; username: string; season: string; week: number; record: string; rank: number; pointsFor: number; lastSyncedAt: string; scoring?: ScoringConfiguration; roster: Player[]; matchup: DashboardMatchup; recommendations: Recommendation[]; }
-
-export function scoreStartDecision(player: Pick<Player, 'projectedPoints' | 'trend'>, scoring?: ScoringConfiguration): number | null {
-  if (scoring?.kind !== 'complete-live') return null;
-  const trendBonus = player.trend === 'up' ? 1.5 : player.trend === 'down' ? -1 : 0;
-  return Math.round((player.projectedPoints + trendBonus) * 10) / 10;
-}
 
 export * from './league-rules.js';

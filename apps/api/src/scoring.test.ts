@@ -1,19 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { EXPECTED_SCORING, liveScoring, referenceScoring, scoringUnavailable, interpretRoster } from '@sleeper/domain';
-import { demoWaiverInput, demoTradeInput } from './test-support/scoring-fixtures.js';
+import { EXPECTED_SCORING, liveScoring, referenceScoring, scoringUnavailable, interpretRoster, interpretScoring } from '@sleeper/domain';
+import { demoWaiverInput, demoTradeInput, demoLineupInput } from './test-support/scoring-fixtures.js';
 import { recommendWaivers } from './waivers.js';
 import { recommendTrades } from './trades.js';
+import { analyzeLineup } from './lineup.js';
+import { scoreLeagueForecasts } from './projection-scoring.js';
 import { LeagueEvaluationService } from './evaluation.js';
 
 test('every ranking entry point blocks partial, absent and invalid scoring despite complete forecasts', () => {
   for (const scoring of [undefined, referenceScoring(), scoringUnavailable(), liveScoring({ ...EXPECTED_SCORING, rec: 0 }, new Date().toISOString())]) {
-    const waivers = demoWaiverInput(), trades = demoTradeInput();
-    waivers.league.scoring = scoring; trades.league.scoring = scoring;
-    const w = recommendWaivers(waivers), t = recommendTrades(trades);
+    const waivers = demoWaiverInput(), trades = demoTradeInput(), lineup = demoLineupInput();
+    waivers.league.scoring = scoring; trades.league.scoring = scoring; lineup.league.scoring = scoring;
+    const w = recommendWaivers(waivers), t = recommendTrades(trades), l = analyzeLineup(lineup);
     assert.equal(w.status, 'unavailable'); assert.deepEqual(w.recommendations, []); assert.match(w.warnings[0], /complete live scoring/);
     assert.equal(t.status, 'unavailable'); assert.deepEqual(t.candidates, []); assert.deepEqual(t.teams, []);
+    assert.equal(l.status, 'unavailable'); assert.deepEqual(l.startSit, []); assert.deepEqual(l.lineup, []); assert.equal(l.matchup, null);
     assert.throws(() => new LeagueEvaluationService().evaluate({ scoring, rules: interpretRoster(['QB']), format: 'redraft', week: 1, rosters: [], players: [] }), /unavailable/);
+    // The boundary itself refuses, so no path can score raw statistics without a validated snapshot.
+    assert.throws(() => scoreLeagueForecasts({ rules: interpretScoring([], scoring ?? scoringUnavailable()), signals: waivers.signals!, players: waivers.players }), /validated complete live scoring snapshot/);
   }
 });
 
@@ -38,10 +43,23 @@ test('dashboard metadata and recommendation APIs share persisted scoring and fai
   assert.equal(details.status, 200); assert.deepEqual(details.body.scoring.settings, raw);
   assert.deepEqual((await store.league('1234'))!.scoring!.rawSettings, raw);
   fail = true;
-  for (const path of ['waivers', 'trades']) {
+  for (const path of ['waivers', 'trades', 'lineup']) {
     const response = await get(`/api/${path}/1234?week=8&userId=sample`);
     assert.equal(response.status, 200); assert.equal(response.body.status, 'unavailable');
     assert.equal(response.body.scoring.kind, 'unavailable');
-    assert.deepEqual(response.body[path === 'waivers' ? 'recommendations' : 'candidates'], []);
+    assert.deepEqual(response.body[path === 'waivers' ? 'recommendations' : path === 'trades' ? 'candidates' : 'startSit'], []);
+  }
+});
+
+test('no ranking module scores statistics itself; the boundary is the only path', async () => {
+  const { readFile, readdir } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const { join } = await import('node:path');
+  const directory = fileURLToPath(new URL('.', import.meta.url));
+  const sources = (await readdir(directory)).filter(name => name.endsWith('.ts') && !name.endsWith('.test.ts'));
+  for (const name of sources) {
+    if (['projection-scoring.ts'].includes(name)) continue;
+    const text = await readFile(join(directory, name), 'utf8');
+    assert.doesNotMatch(text, /scoring\.score\(/, `${name} must obtain points from scoreLeagueForecasts, not by scoring statistics itself`);
   }
 });

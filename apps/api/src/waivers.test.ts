@@ -1,4 +1,4 @@
-import { EXPECTED_SCORING, liveScoring } from '@sleeper/domain';
+import { EXPECTED_SCORING, liveScoring, scoringSnapshotId } from '@sleeper/domain';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { recommendWaivers, type WaiverInput } from './waivers.js';
@@ -183,4 +183,54 @@ test('drops preserve current and future starter coverage, including overlapping 
   input.league.rosterPositions[1].position = 'SUPER_FLEX';
   input.players.find(p => p.id === 'starter-wr')!.fantasyPositions = ['RB', 'WR'];
   assert.ok(rows(input, 'add-wr').some(r => r.drop?.id === 'bench-1'));
+});
+
+test('waiver rows carry the scoring snapshot, the league-scored sentence and the contributions', () => {
+  const input = fixture();
+  const report = recommendWaivers(input);
+  assert.equal(report.scoringSnapshotId, scoringSnapshotId(input.league.scoring!));
+  assert.equal(report.scoringLabel, 'full-PPR');
+  assert.equal(report.forecastUpdatedAt, input.signals!.updatedAt);
+  const row = report.recommendations.find(r => r.add.id === 'add-wr' && r.horizon === 'streamer')!;
+  assert.equal(row.projectedPoints, 14);
+  assert.equal(row.pointsExplanation, "14.0 points under your league's full-PPR scoring this week");
+  assert.deepEqual(row.contributions.map(c => c.stat).sort(), ['rec', 'rec_yd']);
+  assert.equal(row.contributions.reduce((sum, c) => sum + c.points, 0), 14);
+  assert.ok(row.reasons.some(reason => /Your league's full-PPR scoring applied to the provider's raw stat forecast/.test(reason)));
+  assert.ok(row.reasons.some(reason => /Week 8: 14\.0 points under your league's full-PPR scoring/.test(reason)));
+});
+
+test('a projection whose units or identity fail validation is refused, not ranked or zeroed', () => {
+  const input = fixture();
+  signal(input, 'add-wr').weeks.forEach(week => { week.stats = { targets: 9 }; });
+  input.signals!.players.push({ playerId: 'phantom', weeks: signal(input, 'add-rb').weeks });
+  const report = recommendWaivers(input);
+  assert.deepEqual(report.rejected.map(r => r.kind).sort(), ['identity', 'units']);
+  assert.match(report.rejected.find(r => r.kind === 'units')!.message, /this league's scoring rules do not define/);
+  assert.deepEqual(report.recommendations.filter(r => r.add.id === 'add-wr'), [], 'a refused candidate is never ranked');
+  assert.ok(report.warnings.some(w => /refused because their raw-stat units or player identity/.test(w)));
+  assert.ok(report.recommendations.some(r => r.add.id === 'add-rb'), 'other validated candidates still rank');
+});
+
+test('a pre-scored fantasy total is refused rather than accepted as authoritative', () => {
+  const input = fixture();
+  signal(input, 'add-rb').weeks.forEach(week => { week.stats = { projectedPoints: 30 }; });
+  const report = recommendWaivers(input);
+  assert.equal(report.rejected[0].kind, 'pre-scored');
+  assert.match(report.rejected[0].message, /Provide raw statistics; this league scores them/);
+  assert.deepEqual(report.recommendations.filter(r => r.add.id === 'add-rb'), []);
+});
+
+test('a refused rostered projection is never treated as a zero-value drop or starter baseline', () => {
+  const input = fixture();
+  input.league.settings!.type = 0;
+  const before = recommendWaivers(input);
+  assert.ok(before.recommendations.some(r => r.drop?.id === 'bench-1'), 'the weakest bench player is normally the drop');
+  // His forecast now fails unit validation. A bye must not turn the refusal into a zero-cost drop.
+  signal(input, 'bench-1').weeks.forEach(week => { week.stats = { targets: 3 }; week.bye = true; });
+  const report = recommendWaivers(input);
+  assert.equal(report.rejected[0].kind, 'units');
+  assert.ok(report.recommendations.length, 'other candidates still rank');
+  assert.ok(report.recommendations.every(r => r.drop?.id !== 'bench-1'), 'a refused player is not a droppable baseline');
+  assert.ok(report.recommendations.every(r => r.weakestBench?.id !== 'bench-1'));
 });

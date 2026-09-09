@@ -6,7 +6,8 @@ import { recommendTrades, parseTradeBounds, valueTradePlayer } from './trades.js
 import { optimizeTradeLineup } from './trade-lineup.js';
 import { parseWaiverSignals } from './waiver-signals.js';
 
-const offers = () => recommendTrades(demoTradeInput());
+// A fixed clock keeps the scoring snapshot identity stable, so repeated runs are comparable.
+const offers = () => recommendTrades(demoTradeInput(new Date('2026-09-08T12:00:00Z')));
 test('bilateral needs, cheaper fallbacks, value bounds and legal before/after explanations', () => {
   const report = offers();
   assert.equal(report.status, 'ready'); assert.equal(report.teams.length, 2); assert.ok(report.candidates.length > 1);
@@ -151,4 +152,31 @@ test('extended signal validation rejects malformed dynasty fields and policy', (
   const signals = demoTradeInput().signals!;
   signals.leagues!.demo.rookieDrafts!.push(signals.leagues!.demo.rookieDrafts![0]);
   assert.throws(() => parseWaiverSignals(signals));
+});
+
+test('every player asset shows the league scoring that produced its value; picks show none', () => {
+  const report = offers();
+  const asset = report.teams.flatMap(t => t.surplus).find(a => a.kind === 'player')!;
+  assert.equal(report.scoringLabel, 'full-PPR');
+  assert.ok(report.scoringSnapshotId.startsWith('complete-live:'));
+  assert.equal(report.forecastUpdatedAt, '2026-09-08T12:00:00.000Z');
+  assert.equal(asset.scoring!.snapshotId, report.scoringSnapshotId);
+  assert.equal(asset.scoring!.label, 'full-PPR');
+  assert.match(asset.scoring!.explanation, /points under your league's full-PPR scoring/);
+  assert.deepEqual(asset.scoring!.contributions.map(c => c.stat), ['rush_yd']);
+  assert.equal(asset.scoring!.contributions.reduce((sum, c) => sum + c.points, 0), asset.scoring!.weeklyPoints);
+  assert.match(asset.explanation, /under your league's full-PPR scoring/);
+  const dynasty = recommendTrades(demoTradeInput(new Date('2026-09-08T12:00:00Z'), true));
+  const pick = dynasty.teams.flatMap(t => t.futureCapital?.picks ?? [])[0];
+  if (pick) { assert.equal(pick.scoring, null); assert.match(pick.explanation, /no league scoring applies/); }
+});
+
+test('an unverifiable rostered projection fails the whole valuation instead of scoring it as zero', () => {
+  const input = demoTradeInput(new Date('2026-09-08T12:00:00Z'));
+  input.signals!.players[0].weeks.forEach(week => { week.stats = { targets: 4 }; });
+  const report = recommendTrades(input);
+  assert.equal(report.status, 'unavailable');
+  assert.deepEqual(report.candidates, []);
+  assert.equal(report.rejected[0].kind, 'units');
+  assert.ok(report.warnings.some(w => /scoring rules do not define/.test(w)));
 });

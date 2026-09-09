@@ -1,4 +1,5 @@
 import { ScoringStatus } from './ScoringStatus';
+import { ScoringBreakdown } from './ScoringBreakdown';
 import { useEffect, useMemo, useState } from 'react';
 import { Copy, ExternalLink, RefreshCw, TrendingUp } from 'lucide-react';
 import type { WaiverReport } from '@sleeper/domain';
@@ -40,12 +41,14 @@ export function WaiverPlanner({ leagueId, userId, week, demo, force = false }: {
         <label>Roster need<select value={filters.need} onChange={e => setFilter('need', e.target.value)}><option value="all">All needs</option>{Object.entries(needLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
       </div>
       <p className="waiver-plan-note">Pairs are ranked alternatives. The copyable plan merges duplicate players and treats repeated drops as fallback claims. {visible.length} matching pairs.</p>
+      {report.rejected.length > 0 && <details className="waiver-coverage"><summary>{report.rejected.length} refused projection(s) — excluded, never scored as zero</summary><ul>{report.rejected.map(r => <li key={`${r.playerId}:${r.kind}:${r.message}`}>{r.message}</li>)}</ul></details>}
       {report.warnings.length > 0 && <details className="waiver-coverage" open={report.status === 'unavailable'}><summary>{report.status === 'unavailable' ? 'Analysis unavailable' : 'Data coverage & league constraints'}</summary><ul>{report.warnings.map(w => <li key={w}>{w}</li>)}</ul></details>}
       {visible.length > 0 ? <ol className="waiver-pair-list" aria-label="Ranked add and drop recommendations">{visible.map(r => <li key={r.id}>
         <article className="waiver-pair"><div className="waiver-pair-top"><strong>#{r.priority}</strong><span>{horizonLabels[r.horizon]}</span><span className={`waiver-risk risk-${r.risk}`}>{r.risk} risk</span><label className="waiver-include"><input type="checkbox" checked={!excluded.has(r.id)} aria-label={`Include ${r.add.name}, ${horizonLabels[r.horizon]}, in waiver plan`} onChange={() => { setExcluded(v => { const next = new Set(v); if (next.has(r.id)) next.delete(r.id); else next.add(r.id); return next; }); setCopyStatus(''); }}/> Plan</label></div>
           <h3><span className="waiver-add-label">ADD</span> {r.add.name} <small>{r.add.positions.join('/')} · {r.add.team ?? 'Free agent'}</small></h3>
           <p className="waiver-drop"><strong>{r.drop ? `DROP ${r.drop.name}` : 'No drop needed — open active slot'}</strong></p>
-          <p className="waiver-need">{needLabels[r.need]} · {r.projectedPoints.toFixed(1)} projected points {r.horizon === 'streamer' ? 'this week' : r.horizon === 'dynasty' ? 'per future typical week' : 'per weighted remaining week'}</p>
+          <p className="waiver-need">{needLabels[r.need]} · {r.pointsExplanation}</p>
+          <ScoringBreakdown contributions={r.contributions} label={report.scoringLabel} context={r.horizon === 'dynasty' ? 'the projected future typical week' : `the week ${report.week} stat line`}/>
           <dl className="waiver-comparisons"><div><dt>vs. eligible starter{r.starterComparison ? ` · ${r.starterComparison.name}` : ''}</dt><dd>{delta(r.starterGain)}</dd></div><div><dt>vs. weakest valued bench{r.weakestBench ? ` · ${r.weakestBench.name}` : ''}</dt><dd>{delta(r.benchGain)}</dd></div></dl>
           <p className="waiver-drop-reason">{r.dropReason}</p>
           <div className="waiver-upcoming" aria-label={`Upcoming schedule for ${r.add.name}`}>{r.upcoming.map(w => <span key={w.week}>W{w.week}: {w.bye ? 'BYE' : w.opponent ?? 'Opponent unknown'}<strong>{w.points == null ? 'Projection unknown' : `${w.points.toFixed(1)} pts`}</strong></span>)}</div>

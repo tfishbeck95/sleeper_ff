@@ -33,7 +33,7 @@ test('co-owner view detects starter alerts, keeps custom zero scores, and never 
   assert.deepEqual(data.alerts.map(a => a.kind), ['inactive', 'bye', 'injury', 'empty']);
   assert.equal(data.matchup?.opponent, 'Rival');
   assert.equal(data.matchup?.actualFor, 0);
-  assert.equal(data.matchup?.projectedFor, undefined);
+  assert.equal(data.matchup?.illustrativeFor, undefined);
   assert.equal(data.standings[0].points, 600.25);
   assert.equal(data.standings[0].isUser, true);
   assert.equal(data.playoffChance, undefined);
@@ -80,8 +80,8 @@ test('sample decisions include consistent advantages and a checklist for every p
   const data = createDemo();
   assert.deepEqual(sortAlerts(data.alerts).map(a => a.kind), ['inactive', 'bye', 'injury', 'empty', 'sync']);
   for (const item of [...data.starts, ...data.waivers, ...data.trades, ...data.alerts.map(a => a.action)]) assert.ok(item.checklist.length >= 3);
-  for (const item of data.starts) assert.ok(Math.abs(item.start!.points! - item.sit!.points! - item.advantage!) < .001);
-  for (const item of data.waivers) assert.ok(Math.abs(item.player!.points! - item.drop!.points! - item.advantage!) < .001);
+  for (const item of data.starts) assert.ok(Math.abs(item.start!.illustrativePoints! - item.sit!.illustrativePoints! - item.advantage!) < .001);
+  for (const item of data.waivers) assert.ok(Math.abs(item.player!.illustrativePoints! - item.drop!.illustrativePoints! - item.advantage!) < .001);
 });
 
 test('dashboard renders the requested section order with accessible status and navigation', () => {
