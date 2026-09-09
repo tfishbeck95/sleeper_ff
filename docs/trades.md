@@ -2,7 +2,7 @@
 
 `GET /api/trades/:leagueId?userId=<Sleeper owner or co-owner ID>&week=8`
 
-The route uses the app’s existing bearer token and synchronizes the league before reading one roster/player/pick context. A Sleeper user ID selects a roster; it is not an identity credential. There is no trade submission or messaging endpoint. Connected leagues never fall back to sample projections. `/api/trades/demo?format=redraft` and `format=dynasty` run a separate fictional scenario through the same engine.
+The route uses the app’s existing bearer token and synchronizes the league before reading one roster/player/pick context. A Sleeper user ID selects a roster; it is not an identity credential. There is no trade submission or messaging endpoint. Connected leagues never fall back to sample projections. `/api/trades/demo?format=redraft` and `format=dynasty` use a partial fictional scoring reference and return unavailable rankings.
 
 ## Forecast configuration
 

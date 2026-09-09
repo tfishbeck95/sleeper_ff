@@ -1,3 +1,4 @@
+import { ScoringStatus } from './ScoringStatus';
 import { useEffect, useState } from 'react';
 import type { TradeOffer, TradeReport, TradeTeamImpact } from '@sleeper/domain';
 import { request } from './api';
@@ -34,7 +35,7 @@ export function TradeOfferDetails({ offer }: { offer: TradeOffer }) {
 export function TradeReportView({ report, demo }: { report: TradeReport; demo: boolean }) {
   const own = report.teams.find(t => t.rosterId === report.rosterId);
   return <>
-    <p className="trade-source">{demo ? 'Separate fictional trade scenario · ' : ''}{report.format} · Week {report.week}<br/>{report.source ? `${report.source.name} · Updated ${new Date(report.source.updatedAt).toLocaleString()}` : 'Forecast source unavailable'}</p>
+    <ScoringStatus scoring={report.scoring}/><p className="trade-source">{demo ? 'Separate fictional trade scenario · ' : ''}{report.format} · Week {report.week}<br/>{report.source ? `${report.source.name} · Updated ${new Date(report.source.updatedAt).toLocaleString()}` : 'Forecast source unavailable'}</p>
     {own && <p><strong>Your plan: {own.strategy}.</strong> {own.needs.map(n => `${n.position ?? 'Draft'} ${n.kind}`).join(' · ') || 'No identified weakness.'}</p>}
     <details open={report.status === 'unavailable'}><summary>Coverage, constraints and method</summary><p>{report.methodology}</p><ul>{report.warnings.map(w => <li key={w}>{w}</li>)}</ul><p>Maximum value gap {Math.round(report.bounds.maxValueGap * 100)}%; risk index {Math.round(report.bounds.maxRisk * 100)}/100; minimum need gain {report.bounds.minNeedGain}. Dynasty rebuilder lineup loss capped at {Math.round(report.bounds.maxRebuilderLineupLoss * 100)}%.</p></details>
     {report.teams.length > 0 && <details><summary>Every roster’s needs, surplus and contention</summary>{report.teams.map(t => <div className="trade-team-summary" key={t.rosterId}><h4>{t.name} · {t.strategy}</h4><p>{t.strategyReason}</p><ul>{t.needs.map(n => <li key={n.key}>{n.explanation}</li>)}</ul>{!t.needs.length && <p>No identified weakness under these bounds.</p>}<p>Surplus without reducing this week’s optimal lineup: {t.surplus.map(a => a.name).join(', ') || 'None'}</p>{report.format === 'dynasty' && <p>Future draft capital: {t.futureCapital ? `${t.futureCapital.value} units · ${t.futureCapital.picks.map(p => p.name).join(', ') || 'No owned picks'}` : 'Unknown'}</p>}</div>)}</details>}

@@ -42,6 +42,7 @@ export interface TradeCandidate extends TradeOffer {
   fallback: TradeOffer | null; fallbackReason: string;
 }
 export interface TradeReport {
+  scoring?: import('./scoring.js').ScoringConfiguration;
   leagueId: string; rosterId: number; week: number; format: 'redraft' | 'dynasty' | 'keeper';
   status: 'ready' | 'partial' | 'unavailable';
   source: { name: string; updatedAt: string } | null;

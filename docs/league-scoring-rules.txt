@@ -2,57 +2,62 @@ LEAGUE SCORING RULES
 
 Transcribed from the seven scoring screenshots in sources/.
 Format: Full PPR (1 point per reception).
+This is a partial expected-rules reference, never the runtime scoring source.
+Synchronization stores the complete scoring_settings response from the selected Sleeper league.
+Missing, invalid, or mismatched documented values disable scoring-dependent rankings.
+Additional Sleeper keys are reported and preserved; unshown rules are not assumed absent.
+Each rule below includes its corresponding Sleeper key and expected points.
 Only settings visible in the screenshots are listed; unshown settings are not assumed to be zero.
 
 PASSING (IMG_3348.png)
-- Passing yards: 1 point per 25 yards (0.04 points per yard).
-- Passing touchdown: 4 points.
-- Passing 2-point conversion: 2 points.
-- Pass intercepted: -2 points.
+- Passing yards: 1 point per 25 yards (0.04 points per yard). [Sleeper: pass_yd = 0.04]
+- Passing touchdown: 4 points. [Sleeper: pass_td = 4]
+- Passing 2-point conversion: 2 points. [Sleeper: pass_2pt = 2]
+- Pass intercepted: -2 points. [Sleeper: pass_int = -2]
 
 RUSHING (IMG_3349.png)
-- Rushing yards: 1 point per 10 yards (0.1 points per yard).
-- Rushing touchdown: 6 points.
-- Rushing 2-point conversion: 2 points.
+- Rushing yards: 1 point per 10 yards (0.1 points per yard). [Sleeper: rush_yd = 0.1]
+- Rushing touchdown: 6 points. [Sleeper: rush_td = 6]
+- Rushing 2-point conversion: 2 points. [Sleeper: rush_2pt = 2]
 
 RECEIVING (IMG_3350.png)
-- Reception: 1 point.
-- Receiving yards: 1 point per 10 yards (0.1 points per yard).
-- Receiving touchdown: 6 points.
-- Receiving 2-point conversion: 2 points.
+- Reception: 1 point. [Sleeper: rec = 1]
+- Receiving yards: 1 point per 10 yards (0.1 points per yard). [Sleeper: rec_yd = 0.1]
+- Receiving touchdown: 6 points. [Sleeper: rec_td = 6]
+- Receiving 2-point conversion: 2 points. [Sleeper: rec_2pt = 2]
 
 KICKING (IMG_3351.png)
-- Extra point (PAT) made: 1 point.
-- Field goal made from 0-19 yards: 3 points.
-- Field goal made from 20-29 yards: 3 points.
-- Field goal made from 30-39 yards: 3 points.
-- Field goal made from 40-49 yards: 4 points.
-- Field goal made from 50-59 yards: 5 points.
-- Field goal made from 60+ yards: 6 points.
-- Extra point (PAT) missed: -1 point.
-- Field goal missed: -1 point.
+- Extra point (PAT) made: 1 point. [Sleeper: xpm = 1]
+- Field goal made from 0-19 yards: 3 points. [Sleeper: fgm_0_19 = 3]
+- Field goal made from 20-29 yards: 3 points. [Sleeper: fgm_20_29 = 3]
+- Field goal made from 30-39 yards: 3 points. [Sleeper: fgm_30_39 = 3]
+- Field goal made from 40-49 yards: 4 points. [Sleeper: fgm_40_49 = 4]
+- Field goal made from 50-59 yards: 5 points. [Sleeper: fgm_50_59 = 5]
+- Field goal made from 60+ yards: 6 points. [Sleeper: fgm_60p = 6]
+- Extra point (PAT) missed: -1 point. [Sleeper: xpmiss = -1]
+- Field goal missed: -1 point. [Sleeper: fgmiss = -1]
 
 TEAM DEFENSE (IMG_3352.png and IMG_3353.jpeg)
-- Interception: 2 points.
-- Fumble recovery: 1 point.
-- Forced fumble: 1 point.
-- Safety: 2 points.
-- Blocked kick: 2 points.
-- Defensive touchdown: 6 points.
-- Sack: 1 point.
-- 0 points allowed (shutout): 8 points.
-- Fewer than 100 total yards allowed: 3 points.
+- Interception: 2 points. [Sleeper: int = 2]
+- Fumble recovery: 1 point. [Sleeper: fum_rec = 1]
+- Forced fumble: 1 point. [Sleeper: ff = 1]
+- Safety: 2 points. [Sleeper: safe = 2]
+- Blocked kick: 2 points. [Sleeper: blk_kick = 2]
+- Defensive touchdown: 6 points. [Sleeper: def_td = 6]
+- Sack: 1 point. [Sleeper: sack = 1]
+- 0 points allowed (shutout): 8 points. [Sleeper: pts_allow_0 = 8]
+- Fewer than 100 total yards allowed: 3 points. [Sleeper: yds_allow_0_100 = 3]
 
 TEAM SPECIAL TEAMS (IMG_3353.jpeg)
-- Special teams touchdown: 6 points.
-- Special teams forced fumble: 1 point.
-- Special teams fumble recovery: 1 point.
+- Special teams touchdown: 6 points. [Sleeper: def_st_td = 6]
+- Special teams forced fumble: 1 point. [Sleeper: def_st_ff = 1]
+- Special teams fumble recovery: 1 point. [Sleeper: def_st_fum_rec = 1]
 
 INDIVIDUAL PLAYER SPECIAL TEAMS (IMG_3354.png)
-- Special teams player touchdown: 6 points.
-- Special teams player forced fumble: 1 point.
-- Special teams player fumble recovery: 2 points.
+- Special teams player touchdown: 6 points. [Sleeper: st_td = 6]
+- Special teams player forced fumble: 1 point. [Sleeper: st_ff = 1]
+- Special teams player fumble recovery: 2 points. [Sleeper: st_fum_rec = 2]
 
 FUMBLES / MISCELLANEOUS (IMG_3354.png)
-- Fumble lost: -2 points.
-- Fumble recovery touchdown: 6 points.
+- Fumble lost: -2 points. [Sleeper: fum_lost = -2]
+- Fumble recovery touchdown: 6 points. [Sleeper: fum_rec_td = 6]

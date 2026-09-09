@@ -32,3 +32,28 @@ The local adapter persists a versionable JSON document containing snapshots keye
 ## Deployment model
 
 Build the web application as static assets served through a CDN. Run the API as a single container with a persistent volume for the local profile or PostgreSQL for horizontally scaled deployments. In scaled production, move interval work to one dedicated worker or managed cron job and use a distributed lock. Terminate TLS at the edge, restrict CORS to the web origin, inject configuration through environment variables, rotate bearer/session keys, and expose `/health` to orchestration.
+
+### Scoring provenance and validation
+
+`League.scoring` is a discriminated snapshot: `complete-live`, `partial-reference`, or
+`unavailable`. Both league synchronization and the dashboard metadata endpoint fetch
+and persist the selected league's entire `scoring_settings` response. The scoring
+observation has its own synchronization timestamp, independent of roster/player
+cache timestamps, and is also included in weekly observations. A failed metadata
+refresh disables scoring while retaining the last raw observation and recording the
+failed attempt time. A later successful, validated response restores availability.
+
+`docs/league-scoring-rules.txt` remains a human-readable partial expected-rules
+reference. Its Sleeper key annotations are checked against `EXPECTED_SCORING` by a
+test; application code never reads the file. Missing, mismatched, or nonnumeric
+values fail validation. Additional numeric Sleeper keys are informational and remain
+in the full scoring map, including explicit zero and negative values. No missing
+live value is filled from the reference. Intentional documented-rule changes should
+update both the reference and the expected-value mapping.
+
+Only `complete-live` snapshots can score forecasts, rank start decisions, evaluate
+lineups, or generate waiver/trade recommendations. Legacy flattened settings and
+fictional demo configurations are partial references and cannot enable those
+engines. Existing stores need a successful synchronization to gain live provenance.
+The UI shows the scoring state, observation timestamp, compact summary, and detailed
+validation differences; recommendation reports also carry the scoring snapshot used.

@@ -1,3 +1,4 @@
+import { referenceScoring } from '@sleeper/domain';
 import type { League, NflPlayer, Roster } from '@sleeper/domain';
 import type { WaiverInput } from './waivers.js';
 import type { PlayerSignal } from './waiver-signals.js';
@@ -5,7 +6,7 @@ import type { PlayerSignal } from './waiver-signals.js';
 /** Fictional fixture uses the same pipeline as connected leagues. Never merged into live data. */
 export function demoWaiverInput(now = new Date()): WaiverInput {
   const at = { sourceUpdatedAt: null, synchronizedAt: now.toISOString() };
-  const league: League = { id: 'demo', name: 'Sunday Legends', season: String(now.getUTCFullYear()), status: 'in_season', previousLeagueId: null, totalRosters: 2, scoringSettings: [{ key: 'rec', points: 1 }, { key: 'rec_yd', points: .1 }, { key: 'rush_yd', points: .1 }], rosterPositions: ['RB', 'WR', 'TE', 'BN', 'BN', 'BN'].map((position, slot) => ({ position, slot })), settings: { type: 2, waiver_type: 2, waiver_budget: 100, playoff_teams: 2, playoff_week_start: 17 }, ...at };
+  const league: League = { id: 'demo', scoring: referenceScoring(), name: 'Sunday Legends', season: String(now.getUTCFullYear()), status: 'in_season', previousLeagueId: null, totalRosters: 2, scoringSettings: [{ key: 'rec', points: 1 }, { key: 'rec_yd', points: .1 }, { key: 'rush_yd', points: .1 }], rosterPositions: ['RB', 'WR', 'TE', 'BN', 'BN', 'BN'].map((position, slot) => ({ position, slot })), settings: { type: 2, waiver_type: 2, waiver_budget: 100, playoff_teams: 2, playoff_week_start: 17 }, ...at };
   const entries: Array<[string, string, string, number, number]> = [
     ['starter-rb', 'Aaron Mills', 'RB', 10, 12], ['starter-wr', 'Jordan Cole', 'WR', 12, 12], ['starter-te', 'Sam Ellis', 'TE', 8, 8],
     ['bench-1', 'Evan Price', 'RB', 3, 4], ['bench-2', 'Ben Ross', 'WR', 4, 5], ['bench-3', 'Owen Scott', 'TE', 4, 5],

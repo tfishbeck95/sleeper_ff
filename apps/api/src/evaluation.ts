@@ -1,4 +1,4 @@
-import type { LeagueFormat, RosterRules, TradedDraftPick } from '@sleeper/domain';
+import type { ScoringConfiguration, LeagueFormat, RosterRules, TradedDraftPick } from '@sleeper/domain';
 
 export interface EvaluationPlayer {
   id: string; name: string; positions: string[];
@@ -22,6 +22,7 @@ export interface RosterEvaluation {
 }
 export interface LeagueEvaluation { rosters: RosterEvaluation[]; replacementLevels: Record<string, ExplainableScore>; }
 export interface EvaluationInput {
+  scoring?: ScoringConfiguration;
   rules: RosterRules; format: LeagueFormat; week: number;
   rosters: EvaluationRoster[]; players: EvaluationPlayer[];
   tradedPicks?: TradedDraftPick[]; currentSeason?: string;
@@ -35,6 +36,7 @@ const available = (player: EvaluationPlayer) => !['Out', 'IR', 'PUP', 'Suspended
 /** Evaluates every roster with league-relative baselines; every numeric result carries its rationale. */
 export class LeagueEvaluationService {
   evaluate(input: EvaluationInput): LeagueEvaluation {
+    if (input.scoring?.kind !== 'complete-live') throw new Error('Lineup evaluation unavailable: validated complete live scoring is required.');
     const players = new Map(input.players.map(player => [player.id, player]));
     const assignments = new Map<number, Assigned[]>();
     for (const roster of input.rosters) assignments.set(roster.rosterId, this.assign(roster.playerIds.map(id => players.get(id)).filter((v): v is EvaluationPlayer => Boolean(v)), input.rules));

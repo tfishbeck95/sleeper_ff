@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { TradePlanner, TradeReportView, TradeMessageEditor } from './TradePlanner';
 import { buildTradeMessage } from './trade-message';
 import { recommendTrades } from '../../../api/src/trades';
-import { demoTradeInput } from '../../../api/src/trade-demo';
+import { demoTradeInput } from '../../../api/src/test-support/scoring-fixtures';
 
 test('trade panel renders values, both lineup changes, rationale, risks, fallbacks and editable messages', () => {
   const report = recommendTrades(demoTradeInput());

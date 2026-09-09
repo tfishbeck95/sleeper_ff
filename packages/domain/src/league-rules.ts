@@ -1,12 +1,15 @@
+import { referenceScoring, scoringUnavailable, type ScoringConfiguration } from './scoring.js';
 import type { League, RosterPosition, ScoringSetting } from './index.js';
 
 export type LineupPosition = 'QB' | 'RB' | 'WR' | 'TE' | 'K' | 'DEF' | 'DL' | 'LB' | 'DB' | 'IDP' | 'FLEX' | 'SUPER_FLEX' | 'REC_FLEX' | string;
 export type LeagueFormat = 'dynasty' | 'keeper' | 'redraft';
 
 export interface ScoringRules {
+  configuration: ScoringConfiguration;
+  actionable: boolean;
   settings: Readonly<Record<string, number>>;
-  receptionPoints: number;
-  receptionFormat: 'standard' | 'half-ppr' | 'ppr' | 'custom';
+  receptionPoints: number | null;
+  receptionFormat: 'standard' | 'half-ppr' | 'ppr' | 'custom' | 'unknown';
   score(stats: Readonly<Record<string, number>>): { points: number; explanation: string };
 }
 
@@ -42,17 +45,20 @@ const FLEX: Record<string, string[]> = {
   WRRB_FLEX: ['RB', 'WR'], IDP_FLEX: ['DL', 'LB', 'DB'],
 };
 
-export function interpretScoring(settings: readonly ScoringSetting[] | Readonly<Record<string, number>>): ScoringRules {
+export function interpretScoring(settings: readonly ScoringSetting[] | Readonly<Record<string, number>>, configuration?: ScoringConfiguration): ScoringRules {
   const map = Array.isArray(settings)
     ? Object.fromEntries((settings as readonly ScoringSetting[]).map(({ key, points }) => [key, points]))
     : { ...(settings as Readonly<Record<string, number>>) };
-  const receptionPoints = map.rec ?? 0;
-  const receptionFormat = receptionPoints === 0 ? 'standard' : receptionPoints === .5 ? 'half-ppr' : receptionPoints === 1 ? 'ppr' : 'custom';
+  const config = configuration ?? referenceScoring(map);
+  const rates = config.settings ?? {};
+  const receptionPoints = rates.rec ?? (config.kind === 'complete-live' ? 0 : null);
+  const receptionFormat = receptionPoints === null ? 'unknown' : receptionPoints === 0 ? 'standard' : receptionPoints === .5 ? 'half-ppr' : receptionPoints === 1 ? 'ppr' : 'custom';
   return {
-    settings: map, receptionPoints, receptionFormat,
+    settings: rates, configuration: config, actionable: config.kind === 'complete-live', receptionPoints, receptionFormat,
     score(stats) {
+      if (config.kind !== 'complete-live') throw new Error('A validated complete live scoring configuration is required.');
       const contributions = Object.entries(stats).flatMap(([stat, amount]) => {
-        const rate = map[stat] ?? 0; const points = amount * rate;
+        const rate = rates[stat] ?? 0; const points = amount * rate;
         return points === 0 ? [] : [{ stat, amount, rate, points }];
       });
       const points = contributions.reduce((sum, value) => sum + value.points, 0);
@@ -77,7 +83,7 @@ export function interpretRoster(positions: readonly (RosterPosition | string)[],
   };
 }
 
-export function interpretLeagueRules(league: Pick<League, 'scoringSettings' | 'rosterPositions' | 'settings' | 'previousLeagueId' | 'seasonType'>): LeagueRules {
+export function interpretLeagueRules(league: Pick<League, 'scoring' | 'scoringSettings' | 'rosterPositions' | 'settings' | 'previousLeagueId' | 'seasonType'>): LeagueRules {
   const settings = league.settings ?? {};
   const keeperCount = settings.keeper_count ?? settings.num_keepers;
   const dynasty = settings.type === 2 || settings.dynasty === 1 || settings.taxi_slots > 0;
@@ -85,7 +91,7 @@ export function interpretLeagueRules(league: Pick<League, 'scoringSettings' | 'r
   const median = settings.league_average_match === 1;
   const playoffTeams = settings.playoff_teams ?? 0;
   return {
-    scoring: interpretScoring(league.scoringSettings),
+    scoring: interpretScoring(league.scoringSettings, league.scoring ?? (league.scoringSettings.length ? referenceScoring(Object.fromEntries(league.scoringSettings.map(s => [s.key, s.points]))) : scoringUnavailable())),
     roster: interpretRoster(league.rosterPositions, settings),
     format,
     keepers: { enabled: format === 'keeper', count: keeperCount ?? null },

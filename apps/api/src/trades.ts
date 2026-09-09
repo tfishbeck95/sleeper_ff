@@ -36,9 +36,10 @@ export function valueTradePlayer(signal: PlayerSignal, ros: number, future: numb
 export function recommendTrades(input: TradeInput): TradeReport {
   const { league, week } = input, rules = interpretLeagueRules(league), dynasty = rules.format === 'dynasty';
   const bounds = parseTradeBounds(input.bounds ?? {}), now = input.now ?? new Date();
-  const report: TradeReport = { leagueId: league.id, rosterId: input.rosterId, week, format: rules.format, bounds, status: 'unavailable', source: null, warnings: [], teams: [], candidates: [],
+  const report: TradeReport = { leagueId: league.id, rosterId: input.rosterId, week, format: rules.format, bounds, scoring: rules.scoring.configuration, status: 'unavailable', source: null, warnings: [], teams: [], candidates: [],
     methodology: 'Forecast-based model units, not market prices or acceptance odds. Fairness checks neutral package balance and each manager’s strategy-adjusted value. Needs use league-relative position strength, depth and dynasty longevity/capital. Contention is a heuristic from projected strength and record; manager preferences remain unknown.' };
   const fail = (message: string) => { report.warnings.push(message); return report; };
+  if (!rules.scoring.actionable) { report.warnings.push('Validated complete live scoring is required. Lineup, waiver and trade rankings are unavailable.', ...rules.scoring.configuration.issues.map(issue => issue.message)); return report; }
   const rosters = input.rosters.filter(r => r.leagueId === league.id);
   if (!Number.isInteger(week) || week < 1 || week > 18) return fail('Select a week from 1 to 18.');
   if (!rosters.some(r => r.rosterId === input.rosterId)) throw new Error('Selected roster does not belong to this league.');

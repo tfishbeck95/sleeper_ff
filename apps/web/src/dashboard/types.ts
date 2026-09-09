@@ -1,3 +1,4 @@
+import type { ScoringConfiguration } from '@sleeper/domain';
 import type { SleeperLeague, SleeperRoster, SleeperUser, SleeperLeagueUser, SleeperMatchup, SleeperTransaction, SleeperPlayer } from '@sleeper/sleeper-client';
 
 export interface ConnectedLeague { league: SleeperLeague; roster?: SleeperRoster; coOwned: boolean; error?: string }
@@ -12,6 +13,7 @@ export interface StartDecision extends ProposedAction { start?: DashboardPlayer;
 export interface WaiverTarget extends ProposedAction { player?: DashboardPlayer; drop?: DashboardPlayer; fit?: number; fitLabel: string; advantage?: number }
 export interface DashboardAlert { id: string; kind: AlertKind; title: string; detail: string; action: ProposedAction }
 export interface DashboardData {
+  scoring?: ScoringConfiguration;
   demo: boolean; week: number; teamName: string; format: string; lastSyncedAt: string | null; coverageNote?: string;
   alerts: DashboardAlert[]; starts: StartDecision[]; waivers: WaiverTarget[]; trades: ProposedAction[];
   needs: Array<{ position: string; status: string; tone: 'warning' | 'good' }>;
@@ -22,6 +24,7 @@ export interface DashboardData {
 }
 export interface PlayerAvailability extends SleeperPlayer { injury_status?: string | null; bye_week?: number }
 export interface LeagueDetails {
+  scoring?: ScoringConfiguration;
   league: SleeperLeague; rosters: SleeperRoster[]; users: SleeperLeagueUser[];
   matchups: SleeperMatchup[]; transactions: SleeperTransaction[]; lastSyncedAt: string;
   players?: Record<string, PlayerAvailability>; playerError?: string;

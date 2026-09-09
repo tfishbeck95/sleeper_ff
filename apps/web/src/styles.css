@@ -567,3 +567,8 @@ td small { display: block; font-size: 12px; margin-top: 5px; line-height: 1.4; c
 .trade-team-summary { margin: 12px 0; border-bottom: 1px solid #e3e8e5; }
 .trade-fallback { margin-top: 16px; }
 @media (max-width: 600px) { .trade-planner { padding: 14px; } .trade-candidates > li { padding: 12px; } .trade-packages { grid-template-columns: 1fr; } }
+
+.scoring-status { padding: 16px 20px; margin-bottom: 20px; }
+.scoring-status p { margin: 6px 0; font-size: 13px; }
+.scoring-status summary { cursor: pointer; font-size: 13px; }
+.scoring-status li { font-size: 13px; margin: 6px 0; overflow-wrap: anywhere; }

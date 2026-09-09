@@ -1,3 +1,4 @@
+import { ScoringStatus } from './ScoringStatus';
 import { useEffect, useMemo, useState } from 'react';
 import { Copy, ExternalLink, RefreshCw, TrendingUp } from 'lucide-react';
 import type { WaiverReport } from '@sleeper/domain';
@@ -30,6 +31,7 @@ export function WaiverPlanner({ leagueId, userId, week, demo, force = false }: {
   return <div className="surface waiver-planner" aria-busy={loading}>
     <div className="waiver-planner-heading"><span><TrendingUp size={17}/> Ranked add / drop pairs</span><button className="secondary-button" onClick={() => setRetry(v => v + 1)} disabled={loading}><RefreshCw size={14}/> Recheck</button></div>
     {loading ? <p role="status">Checking league ownership, availability and forecasts…</p> : error ? <p role="alert">{error} Use Recheck to try again. No waiver plan is available.</p> : report && <>
+      <ScoringStatus scoring={report.scoring}/>
       <p className="waiver-source">{demo ? 'Separate waiver sample · Dynasty · $100 FAAB · ' : ''}{report.source ? `${report.source.name} · Updated ${new Date(report.source.updatedAt).toLocaleString()}` : 'Forecast source unavailable'}<br/>{report.rosteredCount} rostered · {report.eligibleCount} acquisition candidates · {report.evaluatedCount} with forecasts</p>
       <div className="waiver-filters">
         <label>Position<select value={filters.position} onChange={e => setFilter('position', e.target.value)}><option value="all">All positions</option>{[...new Set(report.recommendations.flatMap(r => r.add.positions))].sort().map(p => <option key={p}>{p}</option>)}</select></label>

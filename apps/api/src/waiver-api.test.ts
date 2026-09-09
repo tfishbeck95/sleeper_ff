@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './app.js';
 import { JsonStore } from './store.js';
-import { demoWaiverInput } from './waiver-demo.js';
+import { demoWaiverInput } from './test-support/scoring-fixtures.js';
 import type { WaiverSignalProvider } from './waiver-signals.js';
 
 async function appFixture(provider?: WaiverSignalProvider) {
@@ -40,5 +40,5 @@ test('provider failures return unavailable analysis without sample leakage, demo
   assert.equal(result.status, 200); assert.equal(result.body.status, 'unavailable');
   assert.deepEqual(result.body.recommendations, []); assert.doesNotMatch(JSON.stringify(result.body), /private\/path/);
   const demo = await auth(app, '/api/waivers/demo');
-  assert.ok(demo.body.recommendations.length); assert.match(demo.body.source.name, /Fictional/); assert.equal(demo.body.submission.url, null);
+  assert.equal(demo.body.status, 'unavailable'); assert.deepEqual(demo.body.recommendations, []); assert.equal(demo.body.scoring.kind, 'partial-reference'); assert.equal(demo.body.submission.url, null);
 });

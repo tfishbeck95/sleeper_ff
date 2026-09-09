@@ -54,7 +54,7 @@ Constraints and FAAB overrides are scoped to a league. `faabRemaining` keys are 
 
 Wrong season/week, absent feeds, feeds over 48 hours old, timestamps over five minutes in the future, and malformed files produce an explicit unavailable result. Duplicate player IDs/weeks, nonfinite stats, out-of-range role/matchup inputs and invalid limits fail validation. Missing players are excluded from forecasts; they are never assigned zero value. The API does not automatically procure an external data subscription.
 
-`GET /api/waivers/demo` runs a separate, fictional scenario through exactly the same pipeline. Its dynasty and FAAB assumptions belong to the waiver sample, and its result has no live Sleeper link. It never substitutes for connected-league analysis.
+`GET /api/waivers/demo` uses a partial fictional scoring reference and returns unavailable rankings with no live Sleeper link. It never substitutes for connected-league analysis.
 
 ## Ranking and roster rules
 

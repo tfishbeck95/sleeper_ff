@@ -1,3 +1,4 @@
+import { scoringUnavailable } from '@sleeper/domain';
 import type { LeagueSnapshot } from '@sleeper/domain';
 import type { DashboardAlert, DashboardData, LeagueDetails, ProposedAction, WaiverTarget } from './types';
 
@@ -66,12 +67,13 @@ export function fromLeagueDetails(details: LeagueDetails, userId: string, week: 
     .sort((a, b) => ((b.wins + b.ties / 2) / Math.max(1, b.wins + b.losses + b.ties)) - ((a.wins + a.ties / 2) / Math.max(1, a.wins + a.losses + a.ties)) || b.points - a.points);
   // The legacy dashboard snapshot isn't owner-scoped, so it cannot safely supply personal recommendations.
   void snapshot;
-  const ppr = league.scoring_settings?.rec;
-  const format = `${league.total_rosters ?? rosters.length} teams · ${ppr === 1 ? 'PPR' : ppr === .5 ? 'Half PPR' : ppr === 0 ? 'Non-PPR' : 'Custom scoring'} · ${league.settings.type === 2 ? 'Dynasty' : league.settings.type === 1 ? 'Keeper' : 'Redraft'}`;
+  const scoring = details.scoring ?? scoringUnavailable();
+  const ppr = scoring.settings?.rec;
+  const format = `${league.total_rosters ?? rosters.length} teams · ${ppr === 1 ? 'PPR' : ppr === .5 ? 'Half PPR' : ppr === 0 ? 'Non-PPR' : scoring.kind === 'unavailable' ? 'Scoring unavailable' : 'Custom scoring'} · ${league.settings.type === 2 ? 'Dynasty' : league.settings.type === 1 ? 'Keeper' : 'Redraft'}`;
   const rank = standings.findIndex(t => t.isUser) + 1;
   const spots = league.settings.playoff_teams;
   return {
-    demo: false, week, teamName: teamName(roster.roster_id), format, lastSyncedAt: details.lastSyncedAt,
+    scoring, demo: false, week, teamName: teamName(roster.roster_id), format, lastSyncedAt: details.lastSyncedAt,
     coverageNote: 'Availability reflects the latest player feed, which may be cached for up to 24 hours; it is not a historical injury report. Bye-week schedule and projection coverage are unavailable. Recheck every starter in Sleeper.',
     alerts: sortAlerts(alerts), starts: [], waivers: [], trades: [], needs: [], standings,
     matchup: opponent ? { opponent: teamName(opponent.roster_id), actualFor: current?.custom_points ?? current?.points, actualAgainst: opponent.custom_points ?? opponent.points, paths: ['Resolve empty or unavailable starter slots to avoid preventable missing points.'], risks: ['Player availability can change before kickoff. Projections are unavailable, so a winning margin and specific matchup risks cannot be estimated.'] } : null,

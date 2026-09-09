@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { interpretRoster, type TradeOffer } from '@sleeper/domain';
-import { demoTradeInput } from './trade-demo.js';
+import { demoTradeInput } from './test-support/scoring-fixtures.js';
 import { recommendTrades, parseTradeBounds, valueTradePlayer } from './trades.js';
 import { optimizeTradeLineup } from './trade-lineup.js';
 import { parseWaiverSignals } from './waiver-signals.js';

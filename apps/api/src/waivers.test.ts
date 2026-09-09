@@ -1,7 +1,8 @@
+import { EXPECTED_SCORING, liveScoring } from '@sleeper/domain';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { recommendWaivers, type WaiverInput } from './waivers.js';
-import { demoWaiverInput } from './waiver-demo.js';
+import { demoWaiverInput } from './test-support/scoring-fixtures.js';
 import { FileWaiverSignalProvider, parseWaiverSignals } from './waiver-signals.js';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -41,7 +42,8 @@ test('custom scoring and eligible FLEX starters change player value and comparis
   const before = rows(input, 'add-wr').find(r => r.horizon === 'streamer')!;
   assert.equal(before.starterComparison?.id, 'starter-rb');
   assert.equal(before.projectedPoints, 14);
-  input.league.scoringSettings.find(s => s.key === 'rec')!.points = 2;
+  input.league.scoring = liveScoring({ ...EXPECTED_SCORING, bonus_rec_wr: 1 }, input.league.synchronizedAt);
+  for (const player of input.signals!.players) for (const week of player.weeks) week.stats.bonus_rec_wr = week.stats.rec ?? 0;
   const after = rows(input, 'add-wr').find(r => r.horizon === 'streamer')!;
   assert.equal(after.projectedPoints, 21);
   assert.ok(after.score > before.score);

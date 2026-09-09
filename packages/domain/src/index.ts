@@ -1,3 +1,5 @@
+import type { ScoringConfiguration } from './scoring.js';
+export * from './scoring.js';
 export * from './waivers.js';
 export * from './trades.js';
 /** Timestamps carried by every record imported from Sleeper. */
@@ -13,7 +15,10 @@ export interface ScoringSetting { key: string; points: number; }
 export interface RosterPosition { position: string; slot: number; }
 export interface League extends SourceMetadata {
   id: string; name: string; season: string; status: string; previousLeagueId: string | null;
-  totalRosters: number | null; scoringSettings: ScoringSetting[]; rosterPositions: RosterPosition[];
+  scoring?: ScoringConfiguration;
+  totalRosters: number | null; rosterPositions: RosterPosition[];
+  /** Legacy reference only; actionable scoring uses the validated snapshot. */
+  scoringSettings: ScoringSetting[];
   /** Sleeper's numeric league settings, retained so rules can be interpreted without guessing. */
   settings?: Record<string, number>;
   seasonType?: string;
@@ -45,7 +50,7 @@ export interface TradedDraftPick extends SourceMetadata, DraftPick { id: string;
 export interface WeeklySnapshot extends SourceMetadata {
   id: string; leagueId: string; season: string; week: number;
   rosterIds: string[]; matchupIds: string[];
-  rosters: Roster[]; matchups: Matchup[];
+  rosters: Roster[]; matchups: Matchup[]; scoring?: ScoringConfiguration;
 }
 
 // Dashboard view models remain intentionally separate from normalized persistence models.
@@ -54,9 +59,10 @@ export type Trend = 'up' | 'down' | 'steady';
 export interface Player { id: string; name: string; team: string; position: Position; projectedPoints: number; trend: Trend; }
 export interface DashboardMatchup { week: number; opponent: string; projectedFor: number; projectedAgainst: number; }
 export interface Recommendation { id: string; kind: 'start' | 'waiver' | 'trade'; title: string; rationale: string; confidence: number; player?: Player; actionLabel: string; }
-export interface LeagueSnapshot { leagueId: string; leagueName: string; username: string; season: string; week: number; record: string; rank: number; pointsFor: number; lastSyncedAt: string; roster: Player[]; matchup: DashboardMatchup; recommendations: Recommendation[]; }
+export interface LeagueSnapshot { leagueId: string; leagueName: string; username: string; season: string; week: number; record: string; rank: number; pointsFor: number; lastSyncedAt: string; scoring?: ScoringConfiguration; roster: Player[]; matchup: DashboardMatchup; recommendations: Recommendation[]; }
 
-export function scoreStartDecision(player: Pick<Player, 'projectedPoints' | 'trend'>): number {
+export function scoreStartDecision(player: Pick<Player, 'projectedPoints' | 'trend'>, scoring?: ScoringConfiguration): number | null {
+  if (scoring?.kind !== 'complete-live') return null;
   const trendBonus = player.trend === 'up' ? 1.5 : player.trend === 'down' ? -1 : 0;
   return Math.round((player.projectedPoints + trendBonus) * 10) / 10;
 }

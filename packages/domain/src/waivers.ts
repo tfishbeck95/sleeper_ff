@@ -15,6 +15,7 @@ export interface WaiverRecommendation {
   faab: { min: number; max: number; remaining: number; urgency: 'low' | 'medium' | 'high'; explanation: string } | null;
 }
 export interface WaiverReport {
+  scoring?: import('./scoring.js').ScoringConfiguration;
   leagueId: string; rosterId: number; week: number; season: string; generatedAt: string;
   rosterSyncedAt: string; source: { name: string; updatedAt: string } | null;
   status: 'ready' | 'partial' | 'unavailable'; warnings: string[];

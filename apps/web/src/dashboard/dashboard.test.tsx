@@ -135,3 +135,22 @@ test('API preserves league data when player sync fails and surfaces authenticate
     await assert.rejects(request('/api/example'), /Unauthorized/);
   } finally { globalThis.fetch = original; }
 });
+
+test('scoring UI shows the validated snapshot timestamp, summary and additional rules', async () => {
+  const { EXPECTED_SCORING, liveScoring, referenceScoring } = await import('@sleeper/domain');
+  const { ScoringStatus } = await import('./ScoringStatus');
+  const input = fixture();
+  input.scoring = liveScoring({ ...EXPECTED_SCORING, bonus_rec_te: .5 }, input.lastSyncedAt);
+  const data = fromLeagueDetails(input, 'me', 8, null);
+  assert.deepEqual(data.scoring, input.scoring);
+  const html = renderToStaticMarkup(<ScoringStatus scoring={data.scoring}/>);
+  assert.match(html, /Validated live scoring/); assert.match(html, /PPR.*Pass TD 4/);
+  assert.ok(html.includes(`dateTime="${input.lastSyncedAt}"`));
+  assert.match(html, /1 additional Sleeper rule/); assert.match(html, /bonus_rec_te/);
+  assert.match(renderToStaticMarkup(<ScoringStatus scoring={referenceScoring()}/>), /cannot produce actionable rankings/);
+  delete input.scoring;
+  assert.match(fromLeagueDetails(input, 'me', 8, null).format, /Scoring unavailable/);
+  const missing = liveScoring({ rec: .5 }, input.lastSyncedAt);
+  const invalid = renderToStaticMarkup(<ScoringStatus scoring={missing}/>);
+  assert.match(invalid, /rankings disabled/); assert.match(invalid, /rec: documented 1, Sleeper 0.5/);
+});

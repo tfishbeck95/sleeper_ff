@@ -1,3 +1,4 @@
+import { referenceScoring } from '@sleeper/domain';
 import { checklistFor, syncAlert } from './model';
 import type { DashboardAlert, DashboardData, DashboardPlayer, ProposedAction, StartDecision, WaiverTarget } from './types';
 
@@ -21,7 +22,7 @@ export function createDemo(): DashboardData {
     { ...action('waiver-walker', 'waiver', 'Consider adding Noah Walker', 'Walker is a possible tight-end backup, but that roster spot could be more useful for running-back coverage.', 65), player: player('sample-8', 'Noah Walker', 'TE', 'ARI', 9.2), drop: weakest, fit: 73, fitLabel: 'Useful depth', advantage: 3.5 },
   ];
   return {
-    demo: true, week: 8, teamName: 'Fourth & Fabulous', format: '12 teams · PPR · Redraft', lastSyncedAt: null,
+    scoring: referenceScoring(), demo: true, week: 8, teamName: 'Fourth & Fabulous', format: '12 teams · PPR · Redraft', lastSyncedAt: null,
     alerts: [
       alert('inactive', 'inactive', 'Tyler Grant is out', 'Your starting WR is unavailable in this scenario. Review an eligible replacement.'),
       alert('bye', 'bye', 'Sam Ellis has a bye', 'Your starting TE has no game in Week 8. Check your bench or the waiver wire.'),

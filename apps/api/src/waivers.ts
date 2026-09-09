@@ -23,9 +23,10 @@ export function recommendWaivers(input: WaiverInput): WaiverReport {
   const rostered = new Set(rosters.flatMap(allIds));
   const report: WaiverReport = {
     leagueId: league.id, rosterId: roster.rosterId, week, season: league.season, generatedAt: now.toISOString(), rosterSyncedAt: roster.synchronizedAt,
-    source: null, status: 'unavailable', warnings: [], rosteredCount: rostered.size, eligibleCount: 0, evaluatedCount: 0, recommendations: [],
+    scoring: rules.scoring.configuration, source: null, status: 'unavailable', warnings: [], rosteredCount: rostered.size, eligibleCount: 0, evaluatedCount: 0, recommendations: [],
     submission: { supported: false, url: /^\d{1,30}$/.test(league.id) ? `https://sleeper.com/leagues/${league.id}` : null, instruction: 'Copy this plan, then submit claims manually in Sleeper. The supported Sleeper API is read-only; no claims have been submitted.' },
   };
+  if (!rules.scoring.actionable) { report.warnings.push('Validated complete live scoring is required. Lineup, waiver and trade rankings are unavailable.', ...rules.scoring.configuration.issues.map(issue => issue.message)); return report; }
   if (league.totalRosters != null && rosters.length !== league.totalRosters) {
     report.warnings.push('League roster coverage is incomplete. Availability cannot be verified.'); return report;
   }

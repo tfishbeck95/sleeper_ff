@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { interpretRoster } from '@sleeper/domain';
+import { interpretRoster, liveScoring, EXPECTED_SCORING } from '@sleeper/domain';
 import { LeagueEvaluationService } from './evaluation.js';
 
 test('evaluates lineups, exposure, dynasty assets, and league-relative strengths', () => {
@@ -13,7 +13,7 @@ test('evaluates lineups, exposure, dynasty assets, and league-relative strengths
     { id: 'r4', name: 'Depth RB', positions: ['RB'], projectedPoints: 6, age: 30 },
   ];
   const result = new LeagueEvaluationService().evaluate({
-    rules: interpretRoster(['QB', 'RB', 'BN']), format: 'dynasty', week: 7, players,
+    scoring: liveScoring({ ...EXPECTED_SCORING }, new Date().toISOString()), rules: interpretRoster(['QB', 'RB', 'BN']), format: 'dynasty', week: 7, players,
     rosters: [{ rosterId: 1, name: 'Alpha', playerIds: ['q1', 'r1', 'r2'] }, { rosterId: 2, name: 'Beta', playerIds: ['q2', 'r3', 'r4'] }],
     tradedPicks: [{ id: 'pick', leagueId: 'l', season: '2027', round: 1, rosterId: 2, previousOwnerId: 2, ownerId: 1, synchronizedAt: '', sourceUpdatedAt: null }],
   });

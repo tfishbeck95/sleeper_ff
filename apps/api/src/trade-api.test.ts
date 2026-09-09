@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './app.js';
 import { JsonStore } from './store.js';
-import { demoTradeInput } from './trade-demo.js';
+import { demoTradeInput } from './test-support/scoring-fixtures.js';
 import type { WaiverSignalProvider } from './waiver-signals.js';
 
 async function fixture(provider?: WaiverSignalProvider) {
@@ -38,6 +38,6 @@ test('missing provider returns unavailable without private errors; sample is exp
   assert.doesNotMatch(JSON.stringify(live.body), /private\/provider|Fictional/);
   for (const format of ['redraft', 'dynasty']) {
     const demo = await auth(app, `/api/trades/demo?format=${format}`);
-    assert.equal(demo.status, 200); assert.equal(demo.body.format, format); assert.ok(demo.body.candidates.length); assert.match(demo.body.source.name, /Fictional/);
+    assert.equal(demo.status, 200); assert.equal(demo.body.format, format); assert.deepEqual(demo.body.candidates, []); assert.equal(demo.body.scoring.kind, 'partial-reference');
   }
 });
