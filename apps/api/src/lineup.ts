@@ -16,6 +16,8 @@ export interface LineupInput {
 const round = (value: number) => Math.round(value * 10) / 10;
 const allIds = (roster: Roster) => [...new Set([...roster.playerIds, ...roster.starterIds, ...roster.reserveIds, ...roster.taxiIds].filter(id => id && id !== '0'))];
 const positionsOf = (player: NflPlayer) => player.fantasyPositions.length ? player.fantasyPositions : player.position ? [player.position] : [];
+/** A healthy player has no designation: "Active" is a roster status, not something to warn about. */
+const designation = (status: string | null) => status && !['active', 'healthy'].includes(status.toLowerCase()) ? status : null;
 /** Abramowitz-Stegun 7.1.26. A normal approximation, disclosed as such wherever it is used. */
 const erf = (x: number) => {
   const t = 1 / (1 + .3275911 * Math.abs(x));
@@ -25,6 +27,8 @@ const erf = (x: number) => {
 const normalCdf = (z: number) => .5 * (1 + erf(z / Math.SQRT2));
 /** Treats a supplied floor/ceiling scenario band as roughly a 10th-to-90th percentile interval. */
 const SCENARIO_BAND_SIGMAS = 2.563;
+/** A target-stability gap this wide or wider is worth warning about before a lineup change. */
+const STABILITY_TOLERANCE = .15;
 
 /**
  * Lineup analysis for one owner.
@@ -85,7 +89,7 @@ export function analyzeLineup(input: LineupInput): LineupReport {
       scored: weekPoints(rules.scoring, current),
       floorPoints: current.floorPoints == null ? null : round(current.floorPoints),
       ceilingPoints: current.ceilingPoints == null ? null : round(current.ceilingPoints),
-      bye: current.bye, injuryStatus: player.injuryStatus,
+      bye: current.bye, injuryStatus: designation(player.injuryStatus), opportunity: player.opportunity,
     };
   };
   const evaluationPlayer = (player: ScoredPlayer): EvaluationPlayer => {
@@ -96,7 +100,7 @@ export function analyzeLineup(input: LineupInput): LineupReport {
       id: player.playerId, name: player.name, positions: player.positions,
       projected: weekPoints(rules.scoring, current), floor: scaled(current.floor), ceiling: scaled(current.ceiling),
       scoringSnapshotId: player.scoringSnapshotId, forecastUpdatedAt: player.forecastUpdatedAt,
-      age: player.age ?? undefined, byeWeek: current.bye ? week : undefined, injuryStatus: player.injuryStatus,
+      age: player.age ?? undefined, byeWeek: current.bye ? week : undefined, injuryStatus: designation(player.injuryStatus),
     };
   };
   const rosteredIds = new Set(rosters.flatMap(allIds));
@@ -148,18 +152,30 @@ export function analyzeLineup(input: LineupInput): LineupReport {
     const advantage = round(selected(challenger).points - starterPoints);
     const cautions = ['Confirm both players are unlocked and eligible for this slot in Sleeper before changing anything.'];
     if (selected(challenger).bye) cautions.push(`${challenger.name} is on bye this week.`);
-    if (challenger.injuryStatus) cautions.push(`${challenger.name} carries the availability designation "${challenger.injuryStatus}".`);
+    const flagged = designation(challenger.injuryStatus);
+    if (flagged) cautions.push(`${challenger.name} carries the availability designation "${flagged}".`);
     if (!selected(challenger).floor || (starter && !selected(starter).floor)) cautions.push('No floor/ceiling scenario was supplied for both players, so the downside of this swap is unquantified.');
+    // A lineup is a safety decision: swapping toward a less consistent target share is worth naming.
+    const gaining = challenger.opportunity, losing = starter?.opportunity;
+    const lessStable = gaining?.stability != null && losing?.stability != null && losing.stability - gaining.stability >= STABILITY_TOLERANCE;
+    if (lessStable) cautions.push(`${challenger.name} has the less stable target share (${gaining!.stability} against ${losing!.stability}). The extra ${advantage} points come with a wider week-to-week range.`);
+    if (gaining?.archetype === 'touchdown-dependent' && losing?.archetype === 'volume-driven') cautions.push(`${challenger.name} is touchdown-dependent while ${starter!.name} is volume-driven, so this swap trades a repeatable floor for a less certain outcome.`);
+    const role = gaining?.stability != null
+      ? ` ${challenger.name} has a ${gaining.stability} target-stability score${gaining.targets != null ? ` on ${gaining.targets} projected targets` : ''}${losing?.stability != null ? ` against ${starter!.name}'s ${losing.stability}` : ''}.`
+      : '';
     decisions.push({
       id: `${slot.slot}:${challenger.playerId}`, slot: slot.slot, start: view(challenger),
-      sit: starter ? view(starter) : { playerId: '', name: 'Empty slot', positions: [], team: null, scored: { points: 0, explanation: `0.0 points under your league's ${report.scoringLabel} scoring`, breakdown: 'No player is assigned to this slot.', contributions: [] }, floorPoints: null, ceilingPoints: null, bye: false, injuryStatus: null },
+      sit: starter ? view(starter) : { playerId: '', name: 'Empty slot', positions: [], team: null, scored: { points: 0, explanation: `0.0 points under your league's ${report.scoringLabel} scoring`, breakdown: 'No player is assigned to this slot.', contributions: [] }, floorPoints: null, ceilingPoints: null, bye: false, injuryStatus: null, opportunity: null },
       advantage,
-      explanation: `${challenger.name} scores ${weekPoints(rules.scoring, selected(challenger)).explanation}, ${advantage} more than ${starter ? `${starter.name}'s ${round(starterPoints)}` : 'an empty slot'} in ${slot.slot}.`,
+      explanation: `${challenger.name} scores ${weekPoints(rules.scoring, selected(challenger)).explanation}, ${advantage} more than ${starter ? `${starter.name}'s ${round(starterPoints)}` : 'an empty slot'} in ${slot.slot}.${role}`,
       confidence: cautions.length > 1 ? 'low' : advantage >= 3 ? 'high' : 'medium',
       cautions,
     });
   }
-  report.startSit = decisions.sort((a, b) => b.advantage - a.advantage || a.id.localeCompare(b.id));
+  // Ties on points go to the steadier target share: a safe lineup prefers the more repeatable role.
+  report.startSit = decisions.sort((a, b) => b.advantage - a.advantage
+    || (b.start.opportunity?.stability ?? -1) - (a.start.opportunity?.stability ?? -1)
+    || a.id.localeCompare(b.id));
 
   const submittedTotal = (value: Roster) => {
     const starters = rules.roster.starters.map((_, index) => value.starterIds[index]).map(id => id && id !== '0' ? scored.byPlayerId.get(id) : undefined);

@@ -70,7 +70,7 @@ export function recommendTrades(input: TradeInput): TradeReport {
   // Trade valuation is conservative, so an undated absence removes a player for the whole horizon.
   const scored = scoreLeagueForecasts({
     rules: rules.scoring, signals, players: input.players, requiredWeeks: weeks,
-    availability: { policy: 'entire-horizon', statuses: TRADE_UNAVAILABLE_STATUSES }, scoredAt: now,
+    availability: { policy: 'entire-horizon', selectedWeek: week, statuses: TRADE_UNAVAILABLE_STATUSES }, scoredAt: now,
   });
   report.rejected = scored.rejected;
   if (scored.rejected.length) report.warnings.push(`${scored.rejected.length} projection(s) were refused because their raw-stat units, player identity or scenario consistency could not be validated. They are excluded rather than valued at zero.`);
@@ -89,9 +89,13 @@ export function recommendTrades(input: TradeInput): TradeReport {
     const value = valueTradePlayer(s, ros, future, dynasty);
     if (![...weekly.values(), value, future].every(Number.isFinite)) return fail('A forecast produced a nonfinite score.');
     const current = value_.weeks.find(f => f.week === week)!;
+    const profile = value_.opportunity;
+    // Name the scoring rule that is actually doing the work, so a full-PPR premium is never implicit.
+    const premium = profile && profile.receptionPoints > 0 ? ` ${profile.receptionExplanation}${profile.passCatchingBack ? ` ${p.fullName} runs a receiver's route load out of the backfield, which standard-scoring running-back rankings do not price.` : ''}` : '';
     const asset: TradeAsset = { id, kind: 'player', name: p.fullName, positions, value: round(value), risk, age: s.age ?? null, careerYears: s.expectedCareerYears ?? null,
-      explanation: dynasty ? `Age ${s.age}; expected career ${s.expectedCareerYears} years. ${round(ros)} remaining-week points and ${round(future)} future typical-week points under your league's ${report.scoringLabel} scoring; age-adjusted career discounted 18% per year, capped at five years. Current production weight: contender 65%, balanced 40%, rebuilder 20%.` : `${round(ros)} average remaining-week points under your league's ${report.scoringLabel} scoring, including byes and known absences. No age or draft-pick premium.`,
-      scoring: { snapshotId: value_.scoringSnapshotId, label: report.scoringLabel, weeklyPoints: round(current.points), ...(({ explanation, contributions }) => ({ explanation, contributions }))(weekPoints(rules.scoring, current)) } };
+      explanation: `${dynasty ? `Age ${s.age}; expected career ${s.expectedCareerYears} years. ${round(ros)} remaining-week points and ${round(future)} future typical-week points under your league's ${report.scoringLabel} scoring; age-adjusted career discounted 18% per year, capped at five years. Current production weight: contender 65%, balanced 40%, rebuilder 20%.` : `${round(ros)} average remaining-week points under your league's ${report.scoringLabel} scoring, including byes and known absences. No age or draft-pick premium.`}${premium}`,
+      scoring: { snapshotId: value_.scoringSnapshotId, label: report.scoringLabel, weeklyPoints: round(current.points), ...(({ explanation, contributions }) => ({ explanation, contributions }))(weekPoints(rules.scoring, current)) },
+      opportunity: profile };
     players.set(id, { asset, signal: s, weekly, ros, future });
   }
   const canPlay = (id: string, w: number) => {
@@ -118,7 +122,7 @@ export function recommendTrades(input: TradeInput): TradeReport {
         const key = `${draft.season}:${roundNumber}:${r.rosterId}`, owner = transfers.get(key)?.ownerId ?? r.rosterId;
         // Mid-round model units: original team's future finish is unknown, not extrapolated from one season.
         const value = 18 / roundNumber ** 1.35 * .85 ** (years - 1);
-        picksByRoster.get(owner)!.push({ id: `pick:${key}`, kind: 'pick', name: `${draft.season} round ${roundNumber} rookie pick (roster ${r.rosterId})`, positions: [], value: round(value), risk: .55, age: null, careerYears: null, scoring: null, explanation: `Currently owned by roster ${owner}. Mid-round heuristic, discounted 15% per future year. Final pick slot, rookie class strength and development are unknown. A pick has no stat line, so no league scoring applies.` });
+        picksByRoster.get(owner)!.push({ id: `pick:${key}`, kind: 'pick', name: `${draft.season} round ${roundNumber} rookie pick (roster ${r.rosterId})`, positions: [], value: round(value), risk: .55, age: null, careerYears: null, scoring: null, opportunity: null, explanation: `Currently owned by roster ${owner}. Mid-round heuristic, discounted 15% per future year. Final pick slot, rookie class strength and development are unknown. A pick has no stat line, so no league scoring applies.` });
       }
     }
   }

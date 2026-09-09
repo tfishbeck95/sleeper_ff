@@ -32,6 +32,36 @@ Refusal reasons, all reported per projection with the player named:
 | `coverage` | A week the caller requires has no forecast, or no explicit `bye` flag. |
 | `scenario` | A floor scoring above, or a ceiling scoring below, the mean. Only that scenario is discarded; the validated mean survives. |
 
+### Receiving opportunity
+
+Providers may attach `opportunity` to a week (projected targets, routes, targets per route run, route
+participation, target share, red-zone targets) and `recentTargets` to a player (the observed target
+count per recent game). See [waivers.md](waivers.md) for the schema and validation.
+
+None of it becomes points. Targets are not a Sleeper scoring key, so the boundary refuses them inside
+`stats`; projected receptions live in `stats.rec` and are scored once, by the league. `opportunity.ts`
+derives, deterministically:
+
+- **Reception points and their share of the total**, read back out of the already-scored
+  contributions, plus what the same stat line projects under non-PPR scoring.
+- **An archetype** — volume-driven, touchdown-dependent, balanced or non-receiving — from where the
+  points came from.
+- **Pass-catching-back identification** at 50% route participation, a 12% target share, or 3.5
+  targets per week.
+- **Target stability** (`1 - coefficient of variation`) and the **recent target trend** from the
+  observed series, both null when too few games were supplied.
+
+The one number that changes a projection is the **floor lift**: a *supplied* floor scenario is moved
+toward its own mean by `(stability - 0.5) / 0.5 x 0.25`, capped at a quarter of the floor-to-mean gap,
+and only when receptions are at least 25% of the league-scored total. The mean and ceiling never move,
+a missing floor is never invented, and the lift is recorded in the week's `adjustments`. Because the
+floor feeds the scenario band, a consistently targeted lineup also reports a tighter win-probability
+spread — from the same bounded change, not a second one.
+
+Start/sit uses the rest: it names each side's target stability, breaks ties on points in favour of the
+steadier target share, and cautions before a swap toward a materially less stable role (a 0.15 gap) or
+from a volume-driven player to a touchdown-dependent one.
+
 Adjustments happen strictly **after** scoring and are disclosed on every value: byes and injury
 windows zero a week, and `matchupMultiplier` and role trend multiply it. Waiver streaming zeroes only
 the selected week for an injury designation without a supplied return week; trade valuation

@@ -27,6 +27,36 @@ export interface ScoredPoints {
 export type ForecastRejectionKind = 'identity' | 'units' | 'pre-scored' | 'coverage' | 'scenario';
 export interface ForecastRejection { playerId: string; kind: ForecastRejectionKind; message: string }
 
+/** Receiving workload behind a week's projection. Never converted to points; only ever explanatory. */
+export interface WeekOpportunity {
+  targets: number | null; routes: number | null; targetsPerRouteRun: number | null;
+  routeParticipation: number | null; targetShare: number | null; redZoneTargets: number | null;
+}
+export type ReceptionArchetype = 'volume-driven' | 'touchdown-dependent' | 'balanced' | 'non-receiving';
+/**
+ * What a player's receiving role means under *this* league's rules.
+ *
+ * `receptionPoints` is read back out of the league-scored contributions, so it states how much of an
+ * already-scored total came from receptions. It is never added to anything: a reception is scored
+ * once, by the league. `floorLift` is the only number here that changes a projection, and it moves a
+ * provider-supplied floor scenario toward its mean, bounded, leaving mean and ceiling untouched.
+ */
+export interface OpportunityProfile {
+  targets: number | null; targetsPerRouteRun: number | null;
+  routeParticipation: number | null; targetShare: number | null; redZoneTargets: number | null;
+  receptionPoints: number; receptionShare: number | null; touchdownShare: number | null;
+  archetype: ReceptionArchetype; passCatchingBack: boolean;
+  /** 0-1 from the observed recent target series; null when too few games were supplied. */
+  stability: number | null;
+  /** Targets per game recently minus earlier in the observed series. */
+  trend: number | null;
+  /** 0-`maxFloorLift` fraction of the floor-to-mean gap recovered by a consistent target share. */
+  floorLift: number;
+  explanation: string;
+  /** States, in points, what this league's reception rule is worth to this player. */
+  receptionExplanation: string;
+}
+
 /** One league-scored week. `mean` is the pure scoring result; `points` adds the disclosed adjustments. */
 export interface ScoredWeek {
   week: number; bye: boolean; opponent: string | null;
@@ -34,6 +64,7 @@ export interface ScoredWeek {
   /** Combined matchup, role and availability factor applied after scoring; 1 means untouched. */
   multiplier: number; adjustments: string[];
   points: number; floorPoints: number | null; ceilingPoints: number | null;
+  opportunity: WeekOpportunity | null;
 }
 
 export interface ScoredPlayerForecast {
@@ -42,6 +73,8 @@ export interface ScoredPlayerForecast {
   weeks: ScoredWeek[];
   /** Future typical week in the same league-scored units, when the provider supplies one. */
   dynasty: ScoredPoints | null;
+  /** Receiving role for the analyzed week; null when neither opportunity nor receiving is present. */
+  opportunity: OpportunityProfile | null;
   scoringSnapshotId: string; forecastUpdatedAt: string;
 }
 
@@ -74,6 +107,7 @@ export interface LineupPlayerView {
   playerId: string; name: string; positions: string[]; team: string | null;
   scored: ScoredPoints; floorPoints: number | null; ceilingPoints: number | null;
   bye: boolean; injuryStatus: string | null;
+  opportunity: OpportunityProfile | null;
 }
 export interface StartSitDecision {
   id: string; slot: string; start: LineupPlayerView; sit: LineupPlayerView;

@@ -3,6 +3,8 @@ import type {
   ScoredPoints, ScoredWeek, ScoringRules,
 } from '@sleeper/domain';
 import { scoringSummary } from '@sleeper/domain';
+import type { WeekOpportunity } from '@sleeper/domain';
+import { opportunityProfile, weekOpportunity } from './opportunity.js';
 import type { PlayerSignal, WaiverSignals, WeeklyForecast } from './waiver-signals.js';
 
 /**
@@ -122,10 +124,20 @@ export function scoreLeagueForecasts(input: ScoreForecastsInput): ScoredForecast
       weeks.push(week);
     }
 
+    // 5. Receiving role, derived from the supplied workload and the points the league already
+    //    produced. The one projection it may change is a supplied floor scenario, bounded.
+    const analyzed = weeks.find(week => week.week === (availability.selectedWeek ?? weeks[0]?.week)) ?? weeks[0];
+    const profile = analyzed ? opportunityProfile({
+      positions, signal, scored: analyzed.mean, weeks: weeks.map(week => week.opportunity).filter((v): v is WeekOpportunity => Boolean(v)),
+      receptionPoints: rules.receptionPoints, scoringLabel: rules.label,
+    }) : null;
+    if (profile && profile.floorLift > 0) for (const week of weeks) applyFloorLift(week, profile.floorLift, profile.stability!);
+
     scored.push({
       playerId: signal.playerId, name: player.fullName, positions, team: player.team,
       injuryStatus: status ?? null, age: signal.age ?? null, weeks,
       dynasty: signal.dynastyStats ? rules.score(signal.dynastyStats) : null,
+      opportunity: profile,
       scoringSnapshotId: rules.snapshotId, forecastUpdatedAt: signals.updatedAt,
       signal, player,
     });
@@ -165,7 +177,27 @@ function scoreWeek(
     points: mean.points * multiplier,
     floorPoints: floor ? floor.points * multiplier : null,
     ceilingPoints: ceiling ? ceiling.points * multiplier : null,
+    opportunity: weekOpportunity(forecast),
   };
+}
+
+/**
+ * Narrows a supplied floor toward its own mean for a consistently targeted player. The mean and the
+ * ceiling are never touched, a missing floor is never invented, and no points are added for a
+ * reception — the floor scenario the provider already scored simply stops being treated as equally
+ * likely for a player whose target volume barely moves. Recorded as a disclosed adjustment.
+ */
+function applyFloorLift(week: ScoredWeek, lift: number, stability: number): void {
+  if (!week.floor || week.floorPoints == null || week.multiplier === 0) return;
+  const lifted = week.floor.points + (week.mean.points - week.floor.points) * lift;
+  const points = Math.round(lifted * 100) / 100;
+  week.floor = {
+    ...week.floor, points,
+    explanation: `${week.floor.explanation}, lifted ${Math.round(lift * 100)}% toward the mean for a ${stability} target-stability score`,
+    breakdown: `${week.floor.breakdown}; floor lifted ${Math.round(lift * 100)}% toward the mean on target stability ${stability} (mean and ceiling unchanged)`,
+  };
+  week.floorPoints = points * week.multiplier;
+  week.adjustments.push(`Consistent targets (stability ${stability}) lift the supplied floor ${Math.round(lift * 100)}% toward the mean. The mean and ceiling are unchanged.`);
 }
 
 /** The league-scored value a lineup consumes for one week, with its explanation preserved. */

@@ -82,6 +82,17 @@ contributions, which the UI discloses on demand. Post-scoring adjustments (bye,
 availability window, opponent strength, role trend) are applied separately from the
 scoring and listed alongside it. See [`docs/lineup.md`](lineup.md) for the contract.
 
+Providers may also attach receiving opportunity — projected targets, targets per
+route run, route participation, receiving share and red-zone targets per week, plus
+the observed recent target series per player. `apps/api/src/opportunity.ts` derives
+reception-point share, an archetype, pass-catching-back identification, target
+stability and the target trend from that workload and from points the league has
+already produced. Opportunity is never converted to points: a reception is scored
+once, by the league. The only projection it may change is a *supplied* floor
+scenario, moved toward its own mean by a bounded, disclosed fraction for a
+consistently targeted player; horizon preferences move waiver ranking scores by at
+most a documented cap, never projected points.
+
 Fictional demo view models are isolated from this pipeline by naming: they carry
 `illustrativePoints`, never a projection-shaped field, and are never mixed into a
 connected league's rankings.

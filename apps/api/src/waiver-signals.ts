@@ -5,12 +5,35 @@ import { readFile } from 'node:fs/promises';
  * A provider never supplies fantasy points. `stats` is the mean scenario; `floorStats`/`ceilingStats`
  * are optional low/high raw-stat scenarios scored by exactly the same league rules.
  */
+/**
+ * Receiving opportunity behind a week's projection.
+ *
+ * These are workload measures, not scoring inputs: `targets` is not a Sleeper scoring key, and the
+ * boundary would refuse it inside `stats`. Projected receptions live in `stats.rec`, where the
+ * league's own rules score them exactly once. Nothing here is ever converted to points; it explains
+ * and bounds the projection that `stats` already produced.
+ */
+export interface WeeklyOpportunity {
+  /** Projected targets for the week. Projected receptions come from `stats.rec`. */
+  targets: number;
+  /** Routes run, used to derive targets per route run when the rate is not supplied directly. */
+  routes?: number;
+  /** 0-1. Supply directly, or leave it to be derived from `targets / routes`. */
+  targetsPerRouteRun?: number;
+  /** 0-1 share of team dropbacks on which the player runs a route. Decisive for running backs. */
+  routeParticipation?: number;
+  /** 0-1 share of the team's targets. */
+  targetShare?: number;
+  /** Projected targets inside the opponent's 20-yard line. */
+  redZoneTargets?: number;
+}
 export interface WeeklyForecast {
   week: number; stats: Record<string, number>;
   floorStats?: Record<string, number>; ceilingStats?: Record<string, number>;
   opponent?: string; bye?: boolean;
   /** 1 is neutral; use only for matchup effects not already in the baseline forecast. */
   matchupMultiplier?: number;
+  opportunity?: WeeklyOpportunity;
 }
 export interface PlayerSignal {
   playerId: string; weeks: WeeklyForecast[];
@@ -21,6 +44,11 @@ export interface PlayerSignal {
   injuryStatus?: string | null; unavailableThroughWeek?: number;
   /** Fractions from 0 to 1. Omit if role changes are already included in baseline stats. */
   role?: { recentShare: number; previousShare: number; games: number };
+  /**
+   * Actual targets in the most recent games, oldest first. Weekly target stability and the recent
+   * target trend are derived from this observed series, never from the smoothed projections.
+   */
+  recentTargets?: number[];
   acquisitionEligible?: boolean; droppable?: boolean; eligibilityReason?: string;
 }
 export interface WaiverSignals {
@@ -44,6 +72,15 @@ const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFi
 const weekNumber = (v: unknown): v is number => finite(v) && Number.isInteger(v) && v >= 1 && v <= 18;
 const stats = (v: unknown) => object(v) && Object.keys(v).length > 0 && Object.values(v).every(finite);
 const ids = (v: unknown) => Array.isArray(v) && v.every(id => typeof id === 'string');
+const fraction = (v: unknown) => finite(v) && v >= 0 && v <= 1;
+/** Opportunity is workload, never points: rates stay fractions and counts stay plausible per week. */
+function opportunity(value: unknown): void {
+  if (!object(value) || !finite(value.targets) || value.targets < 0 || value.targets > 30) throw new Error('Invalid projected targets.');
+  if (value.routes !== undefined && (!finite(value.routes) || value.routes < 0 || value.routes > 80)) throw new Error('Invalid projected routes.');
+  if (value.redZoneTargets !== undefined && (!finite(value.redZoneTargets) || value.redZoneTargets < 0 || value.redZoneTargets > value.targets)) throw new Error('Invalid red-zone targets.');
+  for (const key of ['targetsPerRouteRun', 'routeParticipation', 'targetShare']) if (value[key] !== undefined && !fraction(value[key])) throw new Error(`Invalid ${key}: expected a fraction from 0 to 1.`);
+  if (finite(value.routes) && value.routes > 0 && value.targets > value.routes) throw new Error('Projected targets cannot exceed projected routes.');
+}
 export function parseWaiverSignals(value: unknown): WaiverSignals {
   if (!object(value) || typeof value.season !== 'string' || !/^\d{4}$/.test(value.season) || !weekNumber(value.week) || typeof value.source !== 'string' || !value.source.trim() || typeof value.updatedAt !== 'string' || !Number.isFinite(Date.parse(value.updatedAt)) || !Array.isArray(value.players)) throw new Error('Invalid waiver signal metadata.');
   const seen = new Set<string>();
@@ -55,8 +92,10 @@ export function parseWaiverSignals(value: unknown): WaiverSignals {
       if (!object(w) || !weekNumber(w.week) || weeks.has(w.week) || !stats(w.stats) || (w.opponent !== undefined && typeof w.opponent !== 'string') || (w.bye !== undefined && typeof w.bye !== 'boolean') || (w.matchupMultiplier !== undefined && (!finite(w.matchupMultiplier) || w.matchupMultiplier < .5 || w.matchupMultiplier > 1.5))) throw new Error('Invalid or duplicate weekly waiver forecast.');
       // Scenarios are raw stat lines, never a pre-scored range: they are scored by the same league rules.
       for (const key of ['floorStats', 'ceilingStats']) if (w[key] !== undefined && !stats(w[key])) throw new Error('Invalid floor or ceiling stat scenario.');
+      if (w.opportunity !== undefined) opportunity(w.opportunity);
       weeks.add(w.week);
     }
+    if (p.recentTargets !== undefined && (!Array.isArray(p.recentTargets) || !p.recentTargets.length || p.recentTargets.length > 24 || !p.recentTargets.every(v => finite(v) && v >= 0 && v <= 30))) throw new Error('Invalid recent target series.');
     if (p.dynastyStats !== undefined && !stats(p.dynastyStats)) throw new Error('Invalid dynasty forecast.');
     if (p.age !== undefined && (!finite(p.age) || p.age < 18 || p.age > 60)) throw new Error('Invalid player age.');
     if (p.expectedCareerYears !== undefined && (!finite(p.expectedCareerYears) || p.expectedCareerYears <= 0 || p.expectedCareerYears > 25)) throw new Error('Invalid career horizon.');

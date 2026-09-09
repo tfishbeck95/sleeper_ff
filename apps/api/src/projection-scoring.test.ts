@@ -90,3 +90,40 @@ test('availability policy differs by consumer and every adjustment is disclosed 
 test('a scoring snapshot that cannot score refuses the whole boundary rather than guessing', () => {
   assert.throws(() => scoreLeagueForecasts({ rules: interpretScoring([], referenceScoring()), players: [player('a')], signals: signals([{ playerId: 'a', weeks: [week()] }]) }), /validated complete live scoring snapshot/);
 });
+
+test('opportunity is workload, never points: it may only narrow a supplied floor, within its bound', () => {
+  const opportunity = { targets: 9, routes: 32, routeParticipation: .9, targetShare: .24, redZoneTargets: 2 };
+  const scoredWith = (recentTargets?: number[]) => scoreLeagueForecasts({
+    rules, players: [player('a')], requiredWeeks: [8],
+    signals: signals([{ playerId: 'a', weeks: [week({ floorStats: { rec: 4, rec_yd: 40 }, ceilingStats: { rec: 11, rec_yd: 180, rec_td: 2 }, opportunity })], recentTargets }]),
+  }).players[0].weeks[0];
+  const bare = scoredWith(), steady = scoredWith([9, 8, 10, 9, 9, 8]), erratic = scoredWith([1, 14, 2, 13, 2, 12]);
+  for (const value of [bare, steady, erratic]) {
+    assert.equal(value.mean.points, 26.4, 'the mean is exactly what the league scored, in every case');
+    assert.equal(value.ceiling!.points, 41, 'the ceiling is never moved by a role signal');
+  }
+  assert.equal(bare.floor!.points, 8); assert.equal(erratic.floor!.points, 8);
+  assert.ok(steady.floor!.points > 8 && steady.floor!.points < 26.4);
+  // The lift is capped: it can never recover more than a quarter of the floor-to-mean gap.
+  assert.ok(steady.floor!.points <= 8 + (26.4 - 8) * .25 + 1e-9);
+  assert.match(steady.floor!.explanation, /lifted 21% toward the mean for a 0\.922 target-stability score/);
+  assert.ok(steady.adjustments.some(value => /The mean and ceiling are unchanged/.test(value)));
+  const profile = scoreLeagueForecasts({
+    rules, players: [player('a')], requiredWeeks: [8],
+    signals: signals([{ playerId: 'a', weeks: [week({ opportunity })], recentTargets: [9, 8, 10, 9, 9, 8] }]),
+  }).players[0].opportunity!;
+  assert.equal(profile.targets, 9); assert.equal(profile.targetsPerRouteRun, .281);
+  assert.equal(profile.routeParticipation, .9); assert.equal(profile.targetShare, .24); assert.equal(profile.redZoneTargets, 2);
+  assert.equal(profile.receptionPoints, 8);
+  assert.ok(profile.floorLift > 0, 'the profile reports the lift it caused');
+});
+
+test('a workload measure is never accepted as a scoring statistic', () => {
+  const inStats = scoreLeagueForecasts({
+    rules, players: [player('a')],
+    signals: signals([{ playerId: 'a', weeks: [{ week: 8, bye: false, stats: { rec: 6, targets: 9 } }] }]),
+  });
+  assert.equal(inStats.rejected[0].kind, 'units');
+  assert.match(inStats.rejected[0].message, /"targets", which this league's scoring rules do not define/);
+  assert.deepEqual(inStats.players, [], 'targets belong in `opportunity`, never in a scored stat line');
+});

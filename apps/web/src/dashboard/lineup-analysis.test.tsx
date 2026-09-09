@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { EXPECTED_SCORING, liveScoring } from '@sleeper/domain';
-import type { LineupReport, ScoredPoints } from '@sleeper/domain';
+import type { LineupReport, OpportunityProfile, ScoredPoints } from '@sleeper/domain';
 import { LineupAnalysis } from './LineupAnalysis';
 import { ScoringBreakdown } from './ScoringBreakdown';
+import { OpportunityDetail } from './OpportunityDetail';
 
 const at = '2026-09-08T12:00:00Z';
 const scored = (points: number): ScoredPoints => ({
@@ -12,7 +13,15 @@ const scored = (points: number): ScoredPoints => ({
   breakdown: `${points * 5} rec_yd × 0.1 = ${(points / 2).toFixed(2)}; ${points / 2} rec × 1 = ${(points / 2).toFixed(2)}`,
   contributions: [{ stat: 'rec_yd', amount: points * 5, rate: .1, points: points / 2 }, { stat: 'rec', amount: points / 2, rate: 1, points: points / 2 }],
 });
-const view = (name: string, points: number) => ({ playerId: name, name, positions: ['WR'], team: 'SEA', scored: scored(points), floorPoints: points * .7, ceilingPoints: points * 1.3, bye: false, injuryStatus: null });
+const profile = (overrides: Partial<OpportunityProfile> = {}): OpportunityProfile => ({
+  targets: 9.2, targetsPerRouteRun: .287, routeParticipation: .88, targetShare: .24, redZoneTargets: 1.8,
+  receptionPoints: 6, receptionShare: .5, touchdownShare: 0, archetype: 'volume-driven', passCatchingBack: false,
+  stability: .922, trend: .5, floorLift: .211,
+  explanation: '9.2 projected targets per week on 0.287 targets per route run; 88% route participation. Volume-driven: receptions and receiving yardage carry the projection.',
+  receptionExplanation: "6 of 12 points come from receptions at 1 per catch: 50% of the total. Under non-PPR scoring the same stat line projects 6. Your league's full-PPR scoring is specifically what elevates this value.",
+  ...overrides,
+});
+const view = (name: string, points: number, opportunity: OpportunityProfile | null = profile()) => ({ playerId: name, name, positions: ['WR'], team: 'SEA', scored: scored(points), floorPoints: points * .7, ceilingPoints: points * 1.3, bye: false, injuryStatus: null, opportunity });
 const report = (overrides: Partial<LineupReport> = {}): LineupReport => ({
   leagueId: '1234', rosterId: 1, week: 8, season: '2026', generatedAt: at, status: 'ready',
   scoring: liveScoring({ ...EXPECTED_SCORING }, at), scoringSnapshotId: 'complete-live:2026-09-08T12:00:00Z:abcdef01', scoringLabel: 'full-PPR',
@@ -77,4 +86,25 @@ test('a rendered lineup report never shows a bare projection without its league 
   ];
   for (const sentence of rendered) assert.match(sentence, /full-PPR|same rules/);
   assert.ok(value.startSit.every(decision => decision.start.scored.contributions.length));
+});
+
+test('receiving opportunity is shown as workload context, never as added value', () => {
+  const html = renderToStaticMarkup(<OpportunityDetail profile={profile({ passCatchingBack: true })}/>);
+  assert.match(html, /Volume-driven/);
+  assert.match(html, /Pass-catching back/);
+  assert.match(html, /Floor lifted 21%/);
+  assert.match(html, /Targets per route run/); assert.match(html, /0\.287/);
+  assert.match(html, /Route participation/); assert.match(html, /88%/);
+  assert.match(html, /Red-zone targets/);
+  assert.match(html, /Reception points<\/dt><dd>6 \(50% of the total\)/);
+  assert.match(html, /Target stability<\/dt><dd>0\.922 of 1/);
+  assert.match(html, /Recent target trend<\/dt><dd>\+0\.5 per game/);
+  assert.match(html, /full-PPR scoring is specifically what elevates this value/);
+  assert.match(html, /Opportunity is workload, not scoring/);
+  // A touchdown-dependent receiver is labelled as such, and an absent profile renders nothing.
+  assert.match(renderToStaticMarkup(<OpportunityDetail profile={profile({ archetype: 'touchdown-dependent' })}/>), /Touchdown-dependent/);
+  assert.equal(renderToStaticMarkup(<OpportunityDetail profile={null}/>), '');
+  // Measures the provider did not supply are omitted rather than shown as zero.
+  const sparse = renderToStaticMarkup(<OpportunityDetail profile={profile({ targetsPerRouteRun: null, redZoneTargets: null, stability: null, trend: null })}/>);
+  assert.doesNotMatch(sparse, /Targets per route run|Red-zone targets|Target stability|Recent target trend/);
 });

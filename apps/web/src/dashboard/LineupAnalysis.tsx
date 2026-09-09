@@ -3,6 +3,7 @@ import { ArrowUpDown, CalendarDays, Flag, ListChecks, RefreshCw, Shield, Target 
 import type { LineupReport } from '@sleeper/domain';
 import { ScoringStatus } from './ScoringStatus';
 import { ScoringBreakdown } from './ScoringBreakdown';
+import { OpportunityDetail } from './OpportunityDetail';
 import { request } from './api';
 
 const points = (value: number | null | undefined) => value == null ? '—' : value.toFixed(1);
@@ -54,6 +55,7 @@ export function LineupAnalysis({ report, loading, error, recheck, section }: Lin
           <span className="lineup-slot-points">{points(slot.player?.scored.points)}</span>
           <span className="lineup-slot-range">{slot.explanation} {slot.player?.floorPoints == null ? 'No floor/ceiling stat scenario was supplied, so no range is shown.' : `Scored floor-to-ceiling range ${points(slot.player.floorPoints)}–${points(slot.player.ceilingPoints)}.`}</span>
           {slot.player && <ScoringBreakdown contributions={slot.player.scored.contributions} label={report.scoringLabel}/>}
+          {slot.player && <OpportunityDetail profile={slot.player.opportunity} compact/>}
         </li>)}</ol>
         {report.startSit.length ? <ol className="start-sit-list" aria-label="Start and sit recommendations">{report.startSit.map(decision => <li key={decision.id}>
           <article className="start-sit">
@@ -61,6 +63,7 @@ export function LineupAnalysis({ report, loading, error, recheck, section }: Lin
             <h4>Start {decision.start.name} over {decision.sit.name}</h4>
             <p>{decision.explanation}</p>
             <ScoringBreakdown contributions={decision.start.scored.contributions} label={report.scoringLabel}/>
+            <OpportunityDetail profile={decision.start.opportunity}/>
             <ul className="start-sit-cautions">{decision.cautions.map(caution => <li key={caution}>{caution}</li>)}</ul>
           </article>
         </li>)}</ol> : <p className="lineup-empty">No bench player scores above an eligible starter under your league’s {report.scoringLabel} rules this week.</p>}

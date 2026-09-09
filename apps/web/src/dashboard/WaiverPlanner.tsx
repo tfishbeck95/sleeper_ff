@@ -1,5 +1,6 @@
 import { ScoringStatus } from './ScoringStatus';
 import { ScoringBreakdown } from './ScoringBreakdown';
+import { OpportunityDetail } from './OpportunityDetail';
 import { useEffect, useMemo, useState } from 'react';
 import { Copy, ExternalLink, RefreshCw, TrendingUp } from 'lucide-react';
 import type { WaiverReport } from '@sleeper/domain';
@@ -49,6 +50,7 @@ export function WaiverPlanner({ leagueId, userId, week, demo, force = false }: {
           <p className="waiver-drop"><strong>{r.drop ? `DROP ${r.drop.name}` : 'No drop needed — open active slot'}</strong></p>
           <p className="waiver-need">{needLabels[r.need]} · {r.pointsExplanation}</p>
           <ScoringBreakdown contributions={r.contributions} label={report.scoringLabel} context={r.horizon === 'dynasty' ? 'the projected future typical week' : `the week ${report.week} stat line`}/>
+          <OpportunityDetail profile={r.opportunity}/>
           <dl className="waiver-comparisons"><div><dt>vs. eligible starter{r.starterComparison ? ` · ${r.starterComparison.name}` : ''}</dt><dd>{delta(r.starterGain)}</dd></div><div><dt>vs. weakest valued bench{r.weakestBench ? ` · ${r.weakestBench.name}` : ''}</dt><dd>{delta(r.benchGain)}</dd></div></dl>
           <p className="waiver-drop-reason">{r.dropReason}</p>
           <div className="waiver-upcoming" aria-label={`Upcoming schedule for ${r.add.name}`}>{r.upcoming.map(w => <span key={w.week}>W{w.week}: {w.bye ? 'BYE' : w.opponent ?? 'Opponent unknown'}<strong>{w.points == null ? 'Projection unknown' : `${w.points.toFixed(1)} pts`}</strong></span>)}</div>

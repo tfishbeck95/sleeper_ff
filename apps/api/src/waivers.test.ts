@@ -1,7 +1,7 @@
 import { EXPECTED_SCORING, liveScoring, scoringSnapshotId } from '@sleeper/domain';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { recommendWaivers, type WaiverInput } from './waivers.js';
+import { MAX_ROLE_SCORE, recommendWaivers, roleScore, type WaiverInput } from './waivers.js';
 import { demoWaiverInput } from './test-support/scoring-fixtures.js';
 import { FileWaiverSignalProvider, parseWaiverSignals } from './waiver-signals.js';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -233,4 +233,55 @@ test('a refused rostered projection is never treated as a zero-value drop or sta
   assert.ok(report.recommendations.length, 'other candidates still rank');
   assert.ok(report.recommendations.every(r => r.drop?.id !== 'bench-1'), 'a refused player is not a droppable baseline');
   assert.ok(report.recommendations.every(r => r.weakestBench?.id !== 'bench-1'));
+});
+
+test('season-long adds prefer a stable target share; streamers prefer target growth', () => {
+  // One player, one variable: only the shape of his observed target series changes.
+  const shaped = (recentTargets: number[]) => {
+    const input = fixture();
+    const s = signal(input, 'add-wr');
+    s.role = { previousShare: .4, recentShare: .4, games: 4 };
+    s.weeks.forEach(w => { w.opportunity = { targets: 9, routes: 32, routeParticipation: .9, targetShare: .22 }; });
+    s.recentTargets = recentTargets;
+    return recommendWaivers(input).recommendations.filter(r => r.add.id === 'add-wr');
+  };
+  const steady = shaped([9, 8, 10, 9, 9, 8]), climbing = shaped([2, 3, 4, 12, 14, 15]);
+  const row = (rows: typeof steady, horizon: string) => rows.find(r => r.horizon === horizon)!;
+  assert.equal(row(steady, 'streamer').projectedPoints, row(climbing, 'streamer').projectedPoints, 'the league-scored points are identical');
+  assert.ok(row(steady, 'rest-of-season').score > row(climbing, 'rest-of-season').score, 'a season-long add prefers the stable target share');
+  assert.ok(row(climbing, 'streamer').score > row(steady, 'streamer').score, 'a streamer prefers the climbing target share');
+  assert.match(row(steady, 'rest-of-season').reasons.find(r => /prefer stable reception volume/.test(r))!, /target stability 0\.922 moves the ranking score \+1\.27, capped at 1\.5/);
+  assert.match(row(climbing, 'streamer').reasons.find(r => /prefers target growth/.test(r))!, /moves the ranking score \+1\.5, capped at 1\.5/);
+  // Whatever the series, the preference stays inside its documented bound.
+  for (const rows of [steady, climbing]) for (const r of rows) assert.ok(Math.abs(roleScore(r.opportunity, r.horizon).value) <= MAX_ROLE_SCORE);
+});
+
+test('role signals move the ranking score only, never the league-scored points', () => {
+  const plain = fixture(), enriched = fixture();
+  for (const s of enriched.signals!.players) s.recentTargets = [9, 8, 10, 9, 9, 8];
+  const before = recommendWaivers(plain).recommendations;
+  const after = recommendWaivers(enriched).recommendations;
+  for (const row of after) {
+    const match = before.find(r => r.id === row.id);
+    if (match) assert.equal(row.projectedPoints, match.projectedPoints, `${row.id} points must not move with a role signal`);
+  }
+});
+
+test('a pass-catching back is named and its full-PPR premium quantified', () => {
+  const row = recommendWaivers(fixture()).recommendations.find(r => r.add.id === 'stash')!;
+  assert.equal(row.opportunity!.passCatchingBack, true);
+  assert.equal(row.opportunity!.archetype, 'volume-driven');
+  assert.ok(row.reasons.some(reason => /Pass-catching back/.test(reason)));
+  assert.ok(row.reasons.some(reason => /Standard-scoring running-back rankings do not price those receptions/.test(reason)));
+  assert.ok(row.reasons.some(reason => /Under non-PPR scoring the same stat line projects/.test(reason)));
+});
+
+test('touchdown dependence grades as uncertainty rather than as a hidden points penalty', () => {
+  const input = fixture();
+  const s = signal(input, 'add-wr');
+  s.weeks.forEach(w => { w.stats = { rec: 2, rec_yd: 40, rec_td: 1.5 }; delete w.floorStats; delete w.ceilingStats; });
+  const row = recommendWaivers(input).recommendations.find(r => r.add.id === 'add-wr' && r.horizon === 'streamer')!;
+  assert.equal(row.opportunity!.archetype, 'touchdown-dependent');
+  assert.equal(row.projectedPoints, 15, 'the points are exactly what the league scored: 2 + 4 + 9');
+  assert.ok(row.uncertainty.some(value => /Touchdown-dependent/.test(value)));
 });

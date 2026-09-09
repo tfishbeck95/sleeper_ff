@@ -21,6 +21,8 @@ export interface TradeAsset {
     snapshotId: string; label: string; weeklyPoints: number; explanation: string;
     contributions: import('./projections.js').ScoringContribution[];
   } | null;
+  /** Receiving role, including what this league's reception rule is specifically worth here. */
+  opportunity: import('./projections.js').OpportunityProfile | null;
 }
 export interface TradeLineup {
   legal: boolean; points: number;

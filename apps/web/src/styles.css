@@ -565,6 +565,20 @@ td small { display: block; font-size: 12px; margin-top: 5px; line-height: 1.4; c
 .scoring-breakdown th[scope="row"], .scoring-breakdown thead th:first-child { text-align: left; }
 .scoring-breakdown thead th { color: #68738a; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
 @media (max-width: 600px) { .lineup-analysis { padding: 14px; } .lineup-slots > li { grid-template-columns: 44px 1fr auto; } }
+/* Receiving opportunity: context for a projection, never presented as extra value. */
+.opportunity-detail { margin: 8px 0; }
+.opportunity-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 6px; }
+.opportunity-tag { padding: 3px 8px; border-radius: 20px; background: #f0f3fa; color: #43506a; font-size: 10px; font-weight: 650; }
+.opportunity-tag.archetype-volume-driven { color: #146454; background: #e8f7f1; }
+.opportunity-tag.archetype-touchdown-dependent { color: #8b4b11; background: #fff4de; }
+.opportunity-tag.pass-catching { color: #3042ac; background: #eaeeff; }
+.opportunity-tag.floor-lift { color: #4a3b8c; background: #f0ecff; }
+.opportunity-breakdown { font-size: 11px; color: #53617a; line-height: 1.6; }
+.opportunity-breakdown dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; margin: 8px 0; }
+.opportunity-breakdown dt { color: #68738a; font-size: 10px; }
+.opportunity-breakdown dd { margin: 0; color: #29334b; font-weight: 650; }
+.opportunity-note { color: #68738a; font-style: italic; }
+@media (max-width: 600px) { .opportunity-breakdown dl { grid-template-columns: 1fr; } }
 /* Trade planning keeps both sides visible and supports narrow dashboard columns. */
 .trade-planner { padding: 22px; min-width: 0; font-size: 13px; line-height: 1.55; }
 .trade-planner-heading, .trade-message-actions, .trade-filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

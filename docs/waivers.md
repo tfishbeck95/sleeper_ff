@@ -29,8 +29,17 @@ The validated schema is `WaiverSignals` in `apps/api/src/waiver-signals.ts`. Thi
       "ceilingStats": {"rec": 8, "rec_yd": 108, "rec_td": 0.9},
       "opponent": "BUF",
       "bye": false,
-      "matchupMultiplier": 1.05
+      "matchupMultiplier": 1.05,
+      "opportunity": {
+        "targets": 8,
+        "routes": 32,
+        "targetsPerRouteRun": 0.25,
+        "routeParticipation": 0.88,
+        "targetShare": 0.24,
+        "redZoneTargets": 1.5
+      }
     }],
+    "recentTargets": [9, 8, 10, 9, 9, 8],
     "dynastyStats": {"rec": 6, "rec_yd": 75, "rec_td": 0.5},
     "injuryStatus": "Questionable",
     "role": {"recentShare": 0.65, "previousShare": 0.45, "games": 3},
@@ -49,6 +58,23 @@ The validated schema is `WaiverSignals` in `apps/api/src/waiver-signals.ts`. Thi
 ```
 
 Forecasts are raw baseline stats; a provider never supplies fantasy points. Every stat line, including the optional `floorStats` and `ceilingStats` scenarios, is scored by the selected league's own rules exactly once in the shared boundary described in [lineup.md](lineup.md). A projection whose statistic is not defined by this league's scoring rules, whose player ID matches no synchronized Sleeper player, or which supplies a pre-scored key such as `points` or `projectedPoints`, is refused: it appears in the report's `rejected` list with the reason and is excluded from ranking, never counted as zero. A floor that scores above its mean, or a ceiling below it, discards only that scenario and keeps the validated mean. Apply each Sleeper scoring key, including any custom bonus keys supplied by the provider, exactly once. `matchupMultiplier` is an optional adjustment for opponent effects **not already included** in those stats. Likewise omit `role` if role changes are already priced into the forecast. Role shares are fractions from 0 to 1; the pipeline adjusts weekly points by half the recent-minus-prior share change, capped at ±15%. This is an explainable heuristic, not a calibrated prediction model.
+
+### Receiving opportunity
+
+`opportunity` is workload, not scoring. `targets` is not a Sleeper scoring key, so it would be refused inside `stats`; projected receptions belong in `stats.rec`, where the league scores them exactly once. Supply `targetsPerRouteRun` directly or leave it to be derived from `targets / routes`; supply `routeParticipation` and `targetShare` (the receiving share) especially for running backs, and `redZoneTargets` where you have them. Rates are fractions from 0 to 1, targets cannot exceed routes, and red-zone targets cannot exceed targets.
+
+`recentTargets` is the **observed** target count in each of the most recent games, oldest first. Weekly target stability is `1 - coefficient of variation` over that series, clamped to 0-1, and the recent target trend is the most recent third's average minus the earlier games'. Fewer than three observed games yields no stability, and fewer than four yields no trend, rather than a flattering default. Do not supply projections here; smoothed projections would report perfect stability for everyone.
+
+These fields never become points. They are used to:
+
+1. **Lift the modeled floor** for consistently targeted players: a *supplied* floor scenario is moved toward its own mean by `(stability - 0.5) / 0.5 x 0.25`, capped at 25% of the floor-to-mean gap, and only when receptions are at least 25% of the league-scored total. The mean and the ceiling never move, a missing floor is never invented, and the lift appears in the week's `adjustments`.
+2. **Identify pass-catching running backs** — a back at 50% route participation, a 12% target share, or 3.5 targets per week — and state what standard-scoring rankings leave out: `receptionExplanation` gives the reception points, their share, and what the same stat line projects under non-PPR scoring.
+3. **Distinguish volume-driven from touchdown-dependent receivers** by where the already-scored points came from. Touchdown dependence (40% or more of the total) is reported as uncertainty, which feeds the existing risk grade; it is never a hidden points penalty.
+4. **Prefer stable reception volume** for lineup decisions and season-long adds.
+5. **Prefer target growth** for streamers and waiver breakouts.
+6. **Explain a trade target's full-PPR premium** in points on the asset itself.
+
+Preferences 4 and 5 move the waiver **ranking score** only, never projected points, by at most `MAX_ROLE_SCORE` (1.5) in either direction, and each row states the adjustment it received and why. A player with no supplied opportunity receives no preference and says so.
 
 `floorStats` and `ceilingStats` are optional low/high raw stat lines for the same week. They are the only source of a floor or ceiling: no range is ever estimated from the mean, and lineup analysis withholds a spread and a win probability when they are absent.
 
