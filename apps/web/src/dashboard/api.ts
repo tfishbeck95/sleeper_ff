@@ -66,3 +66,8 @@ export async function loadLeague(leagueId: string, week: number, signal: AbortSi
   const details = await request<LeagueDetails>(`/api/sleeper/leagues/${encodeURIComponent(leagueId)}?week=${week}`, signal);
   return { details, snapshot: null };
 }
+
+export function loadCommandCenter(leagueId: string, week: number, signal: AbortSignal, bounds: { maxValueGap: string; maxRisk: string }) {
+  const query = new URLSearchParams({ week: String(week), ...bounds });
+  return request<import('@sleeper/domain').CommandCenterResponse>(`/api/command-center/${encodeURIComponent(leagueId)}?${query}`, signal);
+}

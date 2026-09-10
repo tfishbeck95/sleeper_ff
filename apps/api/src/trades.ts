@@ -1,6 +1,6 @@
 import { quarterbackOutlook } from './quarterback.js';
 import { interpretLeagueRules, scoringFormatLabel, type TradeAsset, type TradeBounds, type TradeCandidate, type TradeNeed, type TradeOffer, type TradeReport, type TradeStrategy, type TradeTeamEvaluation, type TradeTeamImpact, type TradedDraftPick, type User } from '@sleeper/domain';
-import { parseWaiverSignals, type PlayerSignal } from './waiver-signals.js';
+import { validatedForecastSnapshot, type PlayerSignal } from './waiver-signals.js';
 import { scoreLeagueForecasts, TRADE_UNAVAILABLE_STATUSES, weekPoints } from './projection-scoring.js';
 import type { WaiverInput } from './waivers.js';
 import { optimizeTradeLineup } from './trade-lineup.js';
@@ -52,7 +52,7 @@ export function recommendTrades(input: TradeInput): TradeReport {
   if (!rules.roster.starters.length) return fail('No starting lineup rules are available.');
   if (league.settings?.disable_trades === 1 || (league.settings?.trade_deadline != null && league.settings.trade_deadline > 0 && week > league.settings.trade_deadline) || league.status === 'complete') return fail('Trading is disabled, the deadline has passed, or the season is complete.');
   let signals;
-  try { signals = input.signals && parseWaiverSignals(input.signals); } catch { return fail('Forecast validation failed. Repair the source before evaluating trades.'); }
+  try { signals = input.signals && validatedForecastSnapshot(input.signals); } catch { return fail('Forecast validation failed. Repair the source before evaluating trades.'); }
   if (!signals || signals.season !== league.season || signals.week !== week) return fail('A matching forecast source is required. No sample values are used for connected leagues.');
   report.source = { name: signals.source, updatedAt: signals.updatedAt };
   report.forecastUpdatedAt = signals.updatedAt;

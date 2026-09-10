@@ -35,9 +35,9 @@ export function sortAlerts(alerts: DashboardAlert[]) {
 export function rankWaivers(targets: WaiverTarget[]) {
   return [...targets].sort((a, b) => (b.fit ?? -1) - (a.fit ?? -1) || (b.advantage ?? -Infinity) - (a.advantage ?? -Infinity));
 }
-export function fromLeagueDetails(details: LeagueDetails, userId: string, week: number, snapshot: LeagueSnapshot | null): DashboardData {
+export function fromLeagueDetails(details: LeagueDetails, userId: string, week: number, snapshot: LeagueSnapshot | null, selectedRosterId?: number): DashboardData {
   const { league, rosters, users, matchups, transactions } = details;
-  const roster = rosters.find(r => r.owner_id === userId || r.co_owners?.includes(userId));
+  const roster = rosters.find(r => selectedRosterId !== undefined ? r.roster_id === selectedRosterId : r.owner_id === userId || r.co_owners?.includes(userId));
   if (!roster) throw new Error('This account no longer owns or co-owns a roster in the selected league.');
   const teamName = (id: number) => {
     const team = rosters.find(r => r.roster_id === id);
@@ -81,4 +81,34 @@ export function fromLeagueDetails(details: LeagueDetails, userId: string, week: 
     playoffSpots: spots,
     playoffNote: `Your team ranks #${rank} by record and points for${spots != null ? ` with ${spots} playoff spots configured` : ''}. This is a standings summary; division rules and remaining schedules can change qualification. Playoff odds need a projection model.`,
   };
+}
+
+/** Presentation only: ownership and alerts have already been resolved by the authenticated service. */
+export function fromCommandCenter(response: import('@sleeper/domain').CommandCenterResponse): DashboardData {
+  const snapshot = response.sections.snapshot.data;
+  if (!snapshot) throw new Error('League snapshot unavailable.');
+  const { league, roster, rosters, users, matchups, transactions, players } = snapshot;
+  const details: LeagueDetails = {
+    scoring: response.sections.scoring.data ?? scoringUnavailable(),
+    league: { league_id: league.id, name: league.name, season: league.season, status: league.status,
+      roster_positions: league.rosterPositions.map(s => s.position), scoring_settings: {}, settings: league.settings ?? {}, total_rosters: league.totalRosters ?? rosters.length },
+    rosters: rosters.map(r => ({ roster_id: r.rosterId, owner_id: r.ownerId, co_owners: r.coOwnerIds, players: r.playerIds, starters: r.starterIds, settings: r.settings })),
+    users: users.map(u => ({ user_id: u.id, username: u.username, display_name: u.displayName, avatar: u.avatarId })),
+    matchups: matchups.map(m => ({ roster_id: m.rosterId, matchup_id: m.matchupId, points: m.points, custom_points: m.customPoints ?? undefined, players: m.playerIds, starters: m.starterIds })),
+    transactions: transactions.map(t => ({ transaction_id: t.id, type: t.type, status: t.status, roster_ids: t.rosterIds, adds: t.adds, drops: t.drops,
+      draft_picks: t.draftPicks.map(p => ({ season: p.season, round: p.round, roster_id: p.rosterId, owner_id: p.ownerId, previous_owner_id: p.previousOwnerId ?? undefined })),
+      status_updated: Date.parse(t.sourceUpdatedAt ?? t.synchronizedAt) })),
+    players: Object.fromEntries(players.map(p => [p.id, { player_id: p.id, full_name: p.fullName, position: p.position, team: p.team, status: p.status, injury_status: p.injuryStatus }])),
+    lastSyncedAt: roster.synchronizedAt,
+  };
+  // Select the server-resolved roster, including rosters managed only through co-ownership.
+  const ownerId = roster.ownerId ?? roster.coOwnerIds[0];
+  const data = fromLeagueDetails(details, ownerId, response.week, null, response.rosterId);
+  data.alerts = sortAlerts((response.sections.alerts.data ?? []).map(alert => ({ ...alert,
+    action: { id: alert.id, kind: 'start', title: alert.title, reason: alert.detail, checklist: checklistFor('start') } })));
+  data.coverageNote = response.sections.alerts.warnings.join(' ') || undefined;
+  if (data.matchup && response.sections.matchup.data?.opponentRosterId != null) {
+    data.matchup.risks = ['Player availability can change before kickoff. Review the league-scored outlook below.'];
+  }
+  return data;
 }

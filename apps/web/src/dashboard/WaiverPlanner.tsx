@@ -13,15 +13,16 @@ import { buildWaiverPlan, defaultWaiverFilters, filterWaivers, horizonLabels, ne
 
 const delta = (value: number | null) => value == null ? 'Unknown' : `${value > 0 ? '+' : ''}${value.toFixed(1)} pts`;
 
-export function WaiverPlanner({ leagueId, userId, week, demo, force = false }: { leagueId: string; userId?: string; week: number; demo: boolean; force?: boolean }) {
-  const [report, setReport] = useState<WaiverReport | null>(null);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
+export function WaiverPlanner({ leagueId, userId, week, demo, force = false, shared }: { leagueId: string; userId?: string; week: number; demo: boolean; force?: boolean; shared?: { report: WaiverReport | null; error: string; loading: boolean; recheck: () => void } }) {
+  const [localReport, setReport] = useState<WaiverReport | null>(null);
+  const [localError, setError] = useState('');
+  const [localLoading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
   const [filters, setFilters] = useState<WaiverFilters>(defaultWaiverFilters);
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [copyStatus, setCopyStatus] = useState('');
   useEffect(() => {
+    if (shared) return;
     const controller = new AbortController();
     setLoading(true); setReport(null); setError(''); setCopyStatus(''); setExcluded(new Set()); setFilters(defaultWaiverFilters);
     const query = new URLSearchParams({ week: String(week), force: String(force || retry > 0) });
@@ -29,13 +30,14 @@ export function WaiverPlanner({ leagueId, userId, week, demo, force = false }: {
       .then(value => { if (!controller.signal.aborted) { setReport(value); setLoading(false); } })
       .catch(reason => { if (!controller.signal.aborted) { setError(reason instanceof Error ? reason.message : 'Waiver analysis failed.'); setLoading(false); } });
     return () => controller.abort();
-  }, [leagueId, userId, week, demo, force, retry]);
+  }, [leagueId, userId, week, demo, force, retry, shared]);
+  const { report, error, loading } = shared ?? { report: localReport, error: localError, loading: localLoading };
   const visible = useMemo(() => filterWaivers(report?.recommendations ?? [], filters), [report, filters]);
   const selected = visible.filter(r => !excluded.has(r.id));
   const plan = report ? buildWaiverPlan(report, selected) : '';
   const setFilter = (key: keyof WaiverFilters, value: string) => { setFilters(v => ({ ...v, [key]: value })); setCopyStatus(''); };
   return <div className="surface waiver-planner" aria-busy={loading}>
-    <div className="waiver-planner-heading"><span><TrendingUp size={17}/> Ranked add / drop pairs</span><button className="secondary-button" onClick={() => setRetry(v => v + 1)} disabled={loading}><RefreshCw size={14}/> Recheck</button></div>
+    <div className="waiver-planner-heading"><span><TrendingUp size={17}/> Ranked add / drop pairs</span><button className="secondary-button" onClick={() => shared ? shared.recheck() : setRetry(v => v + 1)} disabled={loading}><RefreshCw size={14}/> Recheck</button></div>
     {loading ? <p role="status">Checking league ownership, availability and forecasts…</p> : error ? <p role="alert">{error} Use Recheck to try again. No waiver plan is available.</p> : report && <>
       <ScoringStatus scoring={report.scoring}/>
       <p className="waiver-source">{demo ? 'Separate waiver sample · Dynasty · $100 FAAB · ' : ''}{report.source ? `${report.source.name} · Updated ${new Date(report.source.updatedAt).toLocaleString()}` : 'Forecast source unavailable'}<br/>{report.rosteredCount} rostered · {report.eligibleCount} acquisition candidates · {report.evaluatedCount} with forecasts</p>

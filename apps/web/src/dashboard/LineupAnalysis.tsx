@@ -15,12 +15,13 @@ const points = (value: number | null | undefined) => value == null ? '—' : val
 export interface LineupState { report: LineupReport | null; loading: boolean; error: string; recheck: () => void }
 
 /** Fetched once per league/week and shared by both sections, so one request serves both panels. */
-export function useLineupReport({ leagueId, userId, week, demo, force = false }: { leagueId: string; userId?: string; week: number; demo: boolean; force?: boolean }): LineupState {
+export function useLineupReport({ leagueId, userId, week, demo, force = false, enabled = true }: { leagueId: string; userId?: string; week: number; demo: boolean; force?: boolean; enabled?: boolean }): LineupState {
   const [report, setReport] = useState<LineupReport | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
   useEffect(() => {
+    if (!enabled) return;
     const controller = new AbortController();
     setLoading(true); setReport(null); setError('');
     const query = new URLSearchParams({ week: String(week), force: String(force || retry > 0) });
@@ -28,7 +29,7 @@ export function useLineupReport({ leagueId, userId, week, demo, force = false }:
       .then(value => { if (!controller.signal.aborted) { setReport(value); setLoading(false); } })
       .catch(reason => { if (!controller.signal.aborted) { setError(reason instanceof Error ? reason.message : 'Lineup analysis failed.'); setLoading(false); } });
     return () => controller.abort();
-  }, [leagueId, userId, week, demo, force, retry]);
+  }, [leagueId, userId, week, demo, force, retry, enabled]);
   return { report, loading, error, recheck: () => setRetry(value => value + 1) };
 }
 

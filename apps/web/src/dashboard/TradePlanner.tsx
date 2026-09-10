@@ -44,21 +44,23 @@ export function TradeReportView({ report, demo }: { report: TradeReport; demo: b
     <p className="trade-model-note">Roster fit is a reason to start a conversation. No offer has been sent; confirm availability and league rules in Sleeper.</p>
   </>;
 }
-export function TradePlanner({ leagueId, userId, week, demo, force = false }: { leagueId: string; userId?: string; week: number; demo: boolean; force?: boolean }) {
-  const [report, setReport] = useState<TradeReport | null>(null), [error, setError] = useState(''), [loading, setLoading] = useState(true);
+export function TradePlanner({ leagueId, userId, week, demo, force = false, shared }: { leagueId: string; userId?: string; week: number; demo: boolean; force?: boolean; shared?: { report: TradeReport | null; error: string; loading: boolean; recheck: () => void; bounds: { maxValueGap: string; maxRisk: string }; onBounds: (bounds: { maxValueGap: string; maxRisk: string }) => void } }) {
+  const [localReport, setReport] = useState<TradeReport | null>(null), [localError, setError] = useState(''), [localLoading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0), [gap, setGap] = useState('.25'), [risk, setRisk] = useState('.65'), [format, setFormat] = useState('redraft');
   const query = new URLSearchParams({ week: String(week), force: String(force || retry > 0), maxValueGap: gap, maxRisk: risk, ...(demo ? { format } : {}) }).toString();
   const key = `${demo ? 'demo' : leagueId}:${query}:${retry}`;
   const [loadedKey, setLoadedKey] = useState('');
   useEffect(() => {
+    if (shared) return;
     const controller = new AbortController();
     setLoading(true); setReport(null); setError('');
     request<TradeReport>(`/api/trades/${encodeURIComponent(demo ? 'demo' : leagueId)}?${query}`, controller.signal).then(r => { if (!controller.signal.aborted) { setReport(r); setLoadedKey(key); setLoading(false); } }).catch(e => { if (!controller.signal.aborted) { setError(e instanceof Error ? e.message : 'Trade analysis failed.'); setLoadedKey(key); setLoading(false); } });
     return () => controller.abort();
-  }, [key, leagueId, demo, query]);
-  const busy = loading || loadedKey !== key;
-  return <div className="surface trade-planner" aria-busy={busy}><div className="trade-planner-heading"><strong>Mutual roster fit</strong><button className="secondary-button" disabled={busy} onClick={() => setRetry(v => v + 1)}>Recheck trades</button></div>
-    <div className="trade-filters"><label>Maximum value gap<select value={gap} onChange={e => setGap(e.target.value)}><option value=".1">10% · Strict</option><option value=".25">25% · Balanced</option><option value=".4">40% · Flexible</option></select></label><label>Maximum risk index<select value={risk} onChange={e => setRisk(e.target.value)}><option value=".3">30 / 100</option><option value=".65">65 / 100</option><option value=".9">90 / 100</option></select></label>{demo && <label>Sample format<select value={format} onChange={e => setFormat(e.target.value)}><option value="redraft">Redraft</option><option value="dynasty">Dynasty</option></select></label>}</div>
+  }, [key, leagueId, demo, query, shared]);
+  const { report, error, loading } = shared ?? { report: localReport, error: localError, loading: localLoading };
+  const busy = shared ? loading : loading || loadedKey !== key;
+  return <div className="surface trade-planner" aria-busy={busy}><div className="trade-planner-heading"><strong>Mutual roster fit</strong><button className="secondary-button" disabled={busy} onClick={() => shared ? shared.recheck() : setRetry(v => v + 1)}>Recheck trades</button></div>
+    <div className="trade-filters"><label>Maximum value gap<select value={shared?.bounds.maxValueGap ?? gap} onChange={e => shared ? shared.onBounds({ ...shared.bounds, maxValueGap: e.target.value }) : setGap(e.target.value)}><option value=".1">10% · Strict</option><option value=".25">25% · Balanced</option><option value=".4">40% · Flexible</option></select></label><label>Maximum risk index<select value={shared?.bounds.maxRisk ?? risk} onChange={e => shared ? shared.onBounds({ ...shared.bounds, maxRisk: e.target.value }) : setRisk(e.target.value)}><option value=".3">30 / 100</option><option value=".65">65 / 100</option><option value=".9">90 / 100</option></select></label>{demo && <label>Sample format<select value={format} onChange={e => setFormat(e.target.value)}><option value="redraft">Redraft</option><option value="dynasty">Dynasty</option></select></label>}</div>
     {busy ? <p role="status">Evaluating every roster, legal lineups and mutual needs…</p> : error ? <p role="alert">{error} Recheck to try again.</p> : report && <TradeReportView key={key} report={report} demo={demo}/>}
   </div>;
 }

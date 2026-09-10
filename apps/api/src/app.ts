@@ -1,3 +1,4 @@
+import { CommandCenterService, DashboardAccessError } from './command-center.js';
 import { scoringUnavailable } from '@sleeper/domain';
 import express from 'express'; import cors from 'cors'; import { SleeperApiError, SleeperClient } from '@sleeper/sleeper-client'; import { demoSnapshot } from './demo.js'; import type { JsonStore } from './store.js';
 import { LeagueSyncService } from './sync.js';
@@ -46,6 +47,7 @@ const authenticatedTraffic=rateLimit({bucket:'api',max:600,windowMs:60_000,key:b
 const accountTraffic=rateLimit({bucket:'account',max:120,windowMs:60_000,key:bySession});
 export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync = new LeagueSyncService(store, sleeper), signals: WaiverSignalProvider = new FileWaiverSignalProvider(), worker = new LeagueSyncWorker(store, sync)) { const app=express(); app.disable('x-powered-by'); app.set('trust proxy',trustProxySetting()); app.use(cors({origin:process.env.WEB_ORIGIN ?? 'http://localhost:5173', credentials:true})); app.use(express.json({limit:'32kb'}));
  const players = new PlayerDirectoryService(store, sleeper);
+ const commandCenter = new CommandCenterService(store, sync, signals);
  const policy=sessionPolicy();
  app.get('/health',(_req,res)=>res.json({status:'ok'}));
  app.post('/auth/login', signIn, signInToAccount, async(req,res)=>{const login=typeof req.body?.login==='string'?req.body.login.trim().toLowerCase():'';const password=typeof req.body?.password==='string'?req.body.password:'';const user=await store.applicationUserByLogin(login);if(!await verifyLogin(user,password))return res.status(401).json({error:'Invalid login or password.'});const issued=await issueSession(store,user!,policy);res.append('Set-Cookie',sessionCookie(issued.rawSessionId,issued.maxAge)).json({user:publicUser(user!),csrfToken:issued.csrfToken,expiresAt:issued.session.expiresAt});});
@@ -66,6 +68,23 @@ export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync 
    res.json({user:publicUser(updated),verification:'claimed'});}catch(error){next(error);}});
 
  app.param('leagueId',(req,res,next,value)=>{const user=(res.locals.auth as Authentication).user;if(value==='demo'&&demoEnabled())return next();if(!user.sleeperLeagueIds.includes(value))return res.status(403).json({error:'This league is not linked to the authenticated account.'});next();});
+ app.get('/api/command-center/:leagueId', recommendations, async (req, res, next) => {
+   try {
+     const week = typeof req.query.week === 'string' ? Number(req.query.week) : NaN;
+     let bounds;
+     try {
+       bounds = parseTradeBounds(Object.fromEntries(Object.entries(req.query).filter(([key]) => key !== 'week').map(([key, value]) => {
+         if (typeof value !== 'string' || !value.trim()) throw new Error('Invalid bound.');
+         return [key, Number(value)];
+       })));
+     } catch { return res.status(400).json({ error: 'Invalid trade bounds.' }); }
+     res.set('Cache-Control', 'private, no-store');
+     res.json(await commandCenter.load((res.locals.auth as Authentication).user, String(req.params.leagueId), week, bounds));
+   } catch (error) {
+     if (error instanceof DashboardAccessError) return res.status(error.status).json({ error: error.message });
+     next(error);
+   }
+ });
  app.get('/api/trades/:leagueId',recommendations, async (req, res, next) => {
    try {
      let bounds;

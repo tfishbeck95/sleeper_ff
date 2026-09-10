@@ -302,6 +302,23 @@ export class JsonStore {
     await this.write(data => { if (data.leases[key]?.owner === owner) delete data.leases[key]; });
   }
   async lease(key: string) { return (await this.read()).leases[key]; }
+  /** One atomic file read: engines must never assemble a dashboard from separate store reads. */
+  async dashboardContext(leagueId: string, week: number, now = Date.now()) {
+    const data = await this.read();
+    const league = data.leagues[leagueId];
+    const rosters = Object.values(data.rosters).filter(r => r.leagueId === leagueId);
+    const owners = new Set(rosters.flatMap(r => [r.ownerId, ...r.coOwnerIds]));
+    const pickAge = now - Date.parse(data.freshness[`draftPicks:${leagueId}`]);
+    return {
+      league, rosters, players: Object.values(data.players),
+      users: Object.values(data.users).filter(u => owners.has(u.id)),
+      matchups: Object.values(data.matchups).filter(m => m.leagueId === leagueId && m.season === league?.season && m.week === week),
+      transactions: Object.values(data.transactions).filter(t => t.leagueId === leagueId && t.week === week),
+      tradedPicks: Number.isFinite(pickAge) && pickAge >= -5 * 60_000 && pickAge <= 10 * 60_000
+        ? Object.values(data.draftPicks).filter(p => p.leagueId === leagueId) : undefined,
+      freshness: Object.fromEntries(Object.entries(data.freshness).filter(([key]) => key.split(':')[1] === leagueId || key === 'players:nfl')),
+    };
+  }
   async waiverContext(leagueId: string) {
     const data = await this.read();
     return { league: data.leagues[leagueId], rosters: Object.values(data.rosters).filter(r => r.leagueId === leagueId), players: Object.values(data.players) };

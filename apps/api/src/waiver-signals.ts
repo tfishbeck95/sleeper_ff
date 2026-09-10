@@ -214,7 +214,7 @@ export class FileWaiverSignalProvider implements WaiverSignalProvider {
   constructor(private readonly path = process.env.WAIVER_SIGNALS_PATH) {}
   async load(season: string, week: number) {
     if (!this.path) return null;
-    const parsed = parseWaiverSignals(JSON.parse(await readFile(this.path, 'utf8')));
+    const parsed = validatedForecastSnapshot(JSON.parse(await readFile(this.path, 'utf8')));
     return parsed.season === season && parsed.week === week ? parsed : null;
   }
 }
@@ -232,4 +232,20 @@ export function validateRushingSplit(value: unknown, line: unknown): string | nu
     if (amounts.length && (!finite(line[stat]) || amounts.reduce((a, b) => a + b, 0) > (line[stat] as number) + 1e-9)) return `Rushing split ${key} exceeds or lacks aggregate ${stat}.`;
   }
   return null;
+}
+
+/** Own and freeze validated inputs so a downstream engine cannot alter another engine's evidence. */
+export function immutableSnapshot<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) immutableSnapshot(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+const validatedSnapshots = new WeakSet<object>();
+export function validatedForecastSnapshot(value: unknown): WaiverSignals {
+  if (value && typeof value === 'object' && validatedSnapshots.has(value)) return value as WaiverSignals;
+  const snapshot = immutableSnapshot(parseWaiverSignals(structuredClone(value)));
+  validatedSnapshots.add(snapshot);
+  return snapshot;
 }

@@ -57,3 +57,5 @@ Forecasts can be maintained by hand in a JSON file, or ingested automatically fr
 ## Trade planning
 
 The Trades section evaluates every roster and proposes offers only when both managers gain value addressing a need and retain legal lineups within configurable fairness and risk bounds. Redraft and dynasty have separate valuation, with dynasty age, career horizons, rookie capital and contender/rebuilder strategy. Review both teams’ values and lineups, risks and cheaper alternatives, then edit and copy a message. No offers or messages are sent. Live analysis uses the same forecast source with additional dynasty fields; see [trade engine and configuration](docs/trades.md).
+
+See [Owner command center](docs/command-center.md) for the aggregated dashboard API, shared snapshot provenance, and section readiness states.

@@ -71,3 +71,4 @@ export interface Recommendation { id: string; kind: 'start' | 'waiver' | 'trade'
 export interface LeagueSnapshot { leagueId: string; leagueName: string; username: string; season: string; week: number; record: string; rank: number; pointsFor: number; lastSyncedAt: string; scoring?: ScoringConfiguration; roster: Player[]; matchup: DashboardMatchup; recommendations: Recommendation[]; }
 
 export * from './league-rules.js';
+export * from './command-center.js';
