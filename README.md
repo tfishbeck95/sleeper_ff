@@ -20,6 +20,22 @@ Open `http://localhost:5173`. Configure an application login first; session cook
 
 Copy `.env.example` to `.env` to customize local configuration. See [`docs/product-scope.md`](docs/product-scope.md) for product boundaries and [`docs/architecture.md`](docs/architecture.md) for system design.
 
+## League synchronization
+
+Connected leagues are synchronized by one background worker rather than by whoever happens to open a
+page. It keeps the set of active league connections and the NFL week each one is tracking, resolves
+that week from the league's own settings before falling back to the season calendar, and synchronizes a
+bounded number of leagues at a time so a large installation does not lean on a free shared API. Each
+attempt refreshes the league's full scoring settings — a commissioner can change them at any time —
+and records what it did: success or failure category, duration, per-resource freshness, and when the
+next attempt is due. Upstream's own `Retry-After` decides that time when Sleeper sends one; otherwise a
+capped exponential backoff does. A failure removes nothing, so the dashboard keeps serving the last good
+snapshot with the reason it is not newer. Leagues whose seasons are over stop being scheduled after a
+retention window and keep their data; data is deleted only from an archived league no account links any
+more. In a multi-instance deployment one worker or managed job owns the schedule, and leases enforce
+that. Manual refresh queues the same job instead of fanning out upstream inside the request. See
+[league synchronization, locking and retention](docs/league-sync.md).
+
 ## Lineup analysis
 
 Forecast providers supply raw projected statistics, plus optional floor and ceiling raw-stat scenarios — never fantasy points. One boundary applies the synchronized league's own scoring rules to every stat line, records the scoring snapshot and forecast timestamp, and refuses any projection whose raw-stat units or player identity cannot be validated instead of defaulting it to zero. Start/sit, matchup totals and win probability, roster strength, replacement levels, bye and playoff outlooks, waiver rankings and trade valuations all consume only those league-scored points. Every figure reads as “18.4 points under your league's full-PPR scoring”, and the statistics that produced it are one click away. Providers can also supply receiving opportunity — targets, targets per route run, route participation, receiving share, red-zone targets and the observed recent target series — which tightens the floor for consistently targeted players, identifies pass-catching backs standard-scoring rankings underrate, separates volume-driven receivers from touchdown-dependent ones, and says in points what your league's reception rule is worth to a trade target. None of it is ever scored twice. See [lineup analysis and the scoring boundary](docs/lineup.md).

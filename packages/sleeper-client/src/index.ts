@@ -12,9 +12,29 @@ export interface SleeperPlayer { player_id: string; injury_status?: string | nul
 
 export type SleeperErrorCategory = 'timeout' | 'network' | 'rate_limit' | 'not_found' | 'server' | 'client' | 'validation';
 export class SleeperApiError extends Error {
-  constructor(public readonly status: number, message: string, public readonly category: SleeperErrorCategory, public readonly retryable = false) { super(message); this.name = 'SleeperApiError'; }
+  /**
+   * `retryAfterMs` is upstream's own guidance, not ours. It is carried on the error rather than
+   * swallowed by the internal retry loop so a caller that can wait — the background synchronization
+   * worker — schedules its next attempt when Sleeper said to, instead of guessing a backoff.
+   */
+  constructor(public readonly status: number, message: string, public readonly category: SleeperErrorCategory, public readonly retryable = false, public readonly retryAfterMs: number | null = null) { super(message); this.name = 'SleeperApiError'; }
 }
-export interface SleeperClientOptions { timeoutMs?: number; maxRetries?: number; backoffMs?: number; }
+export interface SleeperClientOptions { timeoutMs?: number; maxRetries?: number; backoffMs?: number; maxRetryAfterMs?: number; }
+
+/**
+ * `Retry-After` as milliseconds, or null when the header is absent or unusable.
+ *
+ * Both documented forms are accepted: delay-seconds and an HTTP date. A date already in the past is
+ * zero rather than a negative delay, and anything unparseable is null so a malformed header can never
+ * become an accidental instant retry or an unbounded wait.
+ */
+export function parseRetryAfter(header: string | null | undefined, now = Date.now()): number | null {
+  const value = header?.trim();
+  if (!value) return null;
+  if (/^\d+$/.test(value)) return Number(value) * 1000;
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? Math.max(0, at - now) : null;
+}
 const object = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const hasId = (key: string) => (value: unknown) => object(value) && typeof value[key] === 'string';
 const arrayOf = (guard: (value: unknown) => boolean) => (value: unknown) => Array.isArray(value) && value.every(guard);
@@ -22,7 +42,7 @@ const arrayOf = (guard: (value: unknown) => boolean) => (value: unknown) => Arra
 export class SleeperClient {
   private readonly options: Required<SleeperClientOptions>;
   constructor(private readonly fetcher: typeof fetch = fetch, private readonly baseUrl = BASE_URL, options: SleeperClientOptions = {}) {
-    this.options = { timeoutMs: options.timeoutMs ?? 10_000, maxRetries: options.maxRetries ?? 2, backoffMs: options.backoffMs ?? 200 };
+    this.options = { timeoutMs: options.timeoutMs ?? 10_000, maxRetries: options.maxRetries ?? 2, backoffMs: options.backoffMs ?? 200, maxRetryAfterMs: options.maxRetryAfterMs ?? 5_000 };
   }
   private async get<T>(path: string, validate: (value: unknown) => boolean): Promise<T> {
     for (let attempt = 0; ; attempt += 1) {
@@ -30,7 +50,8 @@ export class SleeperClient {
         const response = await this.fetcher(`${this.baseUrl}${path}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(this.options.timeoutMs) });
         if (!response.ok) {
           const category: SleeperErrorCategory = response.status === 429 ? 'rate_limit' : response.status === 404 ? 'not_found' : response.status >= 500 ? 'server' : 'client';
-          throw new SleeperApiError(response.status, `Sleeper API returned ${response.status}`, category, response.status === 429 || response.status >= 500);
+          const retryAfterMs = parseRetryAfter(response.headers?.get?.('retry-after'));
+          throw new SleeperApiError(response.status, `Sleeper API returned ${response.status}`, category, response.status === 429 || response.status >= 500, retryAfterMs);
         }
         const value: unknown = await response.json();
         if (!validate(value)) throw new SleeperApiError(502, `Invalid Sleeper response for ${path}`, 'validation');
@@ -38,7 +59,12 @@ export class SleeperClient {
       } catch (error) {
         const normalized = error instanceof SleeperApiError ? error : new SleeperApiError(503, error instanceof Error ? error.message : 'Sleeper API is unavailable', error instanceof DOMException && error.name === 'TimeoutError' ? 'timeout' : 'network', true);
         if (!normalized.retryable || attempt >= this.options.maxRetries) throw normalized;
-        await new Promise(resolve => setTimeout(resolve, this.options.backoffMs * 2 ** attempt));
+        // A caller is waiting on this request. Upstream's own delay is honoured while it stays inside
+        // the in-request budget; a longer one is handed back on the error for the worker to schedule,
+        // because holding a request open for a minute is worse than answering from the last snapshot.
+        const wait = normalized.retryAfterMs ?? this.options.backoffMs * 2 ** attempt;
+        if (wait > this.options.maxRetryAfterMs) throw normalized;
+        await new Promise(resolve => setTimeout(resolve, wait));
       }
     }
   }

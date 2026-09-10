@@ -1,6 +1,7 @@
 import { scoringUnavailable } from '@sleeper/domain';
 import express from 'express'; import cors from 'cors'; import { SleeperApiError, SleeperClient } from '@sleeper/sleeper-client'; import { demoSnapshot } from './demo.js'; import type { JsonStore } from './store.js';
 import { LeagueSyncService } from './sync.js';
+import { LeagueSyncWorker, type QueuedSyncJob } from './scheduler/index.js';
 import { FileWaiverSignalProvider, type WaiverSignalProvider } from './waiver-signals.js';
 import { recommendWaivers } from './waivers.js';
 import { demoWaiverInput } from './waiver-demo.js';
@@ -12,6 +13,25 @@ import { authentication, clearSessionCookie, csrf, demoEnabled, issueCsrfToken, 
 import { bySession, rateLimit, trustProxySetting } from './rate-limit.js';
 import { demoLineupInput } from './lineup-demo.js';
 function publicUser(user: import('./store.js').ApplicationUser){return {id:user.id,login:user.login,sleeperUserId:user.sleeperUserId,sleeperUsername:user.sleeperUsername,sleeperLeagueIds:user.sleeperLeagueIds};}
+/**
+ * What a client learns about a league's synchronization without waiting for one.
+ *
+ * It is the connection record plus this worker's view of the queue, so a refresh button can say the
+ * useful things — this is queued, this last succeeded twenty minutes ago, this is waiting until 14:32
+ * because Sleeper rate limited us — instead of only succeeding or failing.
+ */
+async function syncState(store: JsonStore, worker: LeagueSyncWorker, leagueId: string, job?: QueuedSyncJob) {
+  const connection = await store.leagueConnection(leagueId);
+  const state = worker.state(leagueId);
+  return {
+    leagueId, queued: state.queued || Boolean(job), running: state.running, queuePosition: state.position || null, queuedAt: job?.queuedAt ?? null,
+    status: connection?.status ?? 'active', season: connection?.season ?? null, week: connection?.week ?? null,
+    lastSyncedAt: connection?.lastSyncedAt ?? null, lastStatus: connection?.lastStatus ?? null,
+    lastCategory: connection?.lastCategory ?? null, lastDurationMs: connection?.lastDurationMs ?? null,
+    lastRefreshed: connection?.lastRefreshed ?? [], resourceFreshness: connection?.resourceFreshness ?? {},
+    nextAttemptAt: connection?.nextAttemptAt ?? null, consecutiveFailures: connection?.consecutiveFailures ?? 0,
+  };
+}
 const signIn=rateLimit({bucket:'login',max:10,windowMs:15*60_000,message:'Too many sign-in attempts. Try again later.'});
 // Address budgets alone let a botnet grind one account; the account keeps its own budget across every address.
 const signInToAccount=rateLimit({bucket:'login-account',max:10,windowMs:15*60_000,key:req=>typeof req.body?.login==='string'?req.body.login.trim().toLowerCase():'unknown',message:'Too many sign-in attempts for this login. Try again later.'});
@@ -23,7 +43,7 @@ const leagueDetail=rateLimit({bucket:'league-detail',max:20,windowMs:60_000,key:
 const dashboards=rateLimit({bucket:'dashboard',max:120,windowMs:60_000,key:bySession});
 const authenticatedTraffic=rateLimit({bucket:'api',max:600,windowMs:60_000,key:bySession});
 const accountTraffic=rateLimit({bucket:'account',max:120,windowMs:60_000,key:bySession});
-export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync = new LeagueSyncService(store, sleeper), signals: WaiverSignalProvider = new FileWaiverSignalProvider()) { const app=express(); app.disable('x-powered-by'); app.set('trust proxy',trustProxySetting()); app.use(cors({origin:process.env.WEB_ORIGIN ?? 'http://localhost:5173', credentials:true})); app.use(express.json({limit:'32kb'}));
+export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync = new LeagueSyncService(store, sleeper), signals: WaiverSignalProvider = new FileWaiverSignalProvider(), worker = new LeagueSyncWorker(store, sync)) { const app=express(); app.disable('x-powered-by'); app.set('trust proxy',trustProxySetting()); app.use(cors({origin:process.env.WEB_ORIGIN ?? 'http://localhost:5173', credentials:true})); app.use(express.json({limit:'32kb'}));
  const policy=sessionPolicy();
  app.get('/health',(_req,res)=>res.json({status:'ok'}));
  app.post('/auth/login', signIn, signInToAccount, async(req,res)=>{const login=typeof req.body?.login==='string'?req.body.login.trim().toLowerCase():'';const password=typeof req.body?.password==='string'?req.body.password:'';const user=await store.applicationUserByLogin(login);if(!await verifyLogin(user,password))return res.status(401).json({error:'Invalid login or password.'});const issued=await issueSession(store,user!,policy);res.append('Set-Cookie',sessionCookie(issued.rawSessionId,issued.maxAge)).json({user:publicUser(user!),csrfToken:issued.csrfToken,expiresAt:issued.session.expiresAt});});
@@ -36,7 +56,12 @@ export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync 
  app.post('/auth/logout-all',requireAuth,accountTraffic,csrf,async(_req,res)=>{const auth=res.locals.auth as Authentication;await store.revokeUserSessions(auth.user.id,'logout-all');res.append('Set-Cookie',clearSessionCookie()).status(204).end();});
  app.post('/auth/rotate',requireAuth,accountTraffic,csrf,async(_req,res)=>{const auth=res.locals.auth as Authentication;const rotated=await rotateSession(store,auth.session,policy);res.append('Set-Cookie',sessionCookie(rotated.rawSessionId,rotated.maxAge)).json({csrfToken:await issueCsrfToken(store,rotated.session),expiresAt:rotated.session.expiresAt});});
  app.use('/api',requireAuth); app.use('/api',csrf); app.use('/api',authenticatedTraffic);
- app.post('/api/account/sleeper',lookups,async(req,res,next)=>{try{const username=typeof req.body?.username==='string'?req.body.username.trim():'';const leagueIds:string[]=Array.isArray(req.body?.leagueIds)?req.body.leagueIds.filter((id:unknown):id is string=>typeof id==='string').slice(0,50):[];if(!username)return res.status(400).json({error:'A Sleeper username is required.'});const sleeperUser=await sleeper.user(username);if(!sleeperUser)return res.status(404).json({error:'Sleeper user not found.'});if(leagueIds.length){const year=new Date().getUTCFullYear();const available=(await Promise.all([year,year-1,year-2].map(season=>sleeper.leagues(sleeperUser.user_id,season)))).flat();const allowed=new Set(available.map(league=>league.league_id));if(leagueIds.some(id=>!allowed.has(id)))return res.status(403).json({error:'A selected league does not belong to the claimed Sleeper account.'});}const auth=res.locals.auth as Authentication;const updated={...auth.user,sleeperUserId:sleeperUser.user_id,sleeperUsername:sleeperUser.username,sleeperLeagueIds:[...new Set(leagueIds)]};await store.saveApplicationUser(updated);res.json({user:publicUser(updated),verification:'claimed'});}catch(error){next(error);}});
+ app.post('/api/account/sleeper',lookups,async(req,res,next)=>{try{const username=typeof req.body?.username==='string'?req.body.username.trim():'';const leagueIds:string[]=Array.isArray(req.body?.leagueIds)?req.body.leagueIds.filter((id:unknown):id is string=>typeof id==='string').slice(0,50):[];if(!username)return res.status(400).json({error:'A Sleeper username is required.'});const sleeperUser=await sleeper.user(username);if(!sleeperUser)return res.status(404).json({error:'Sleeper user not found.'});if(leagueIds.length){const year=new Date().getUTCFullYear();const available=(await Promise.all([year,year-1,year-2].map(season=>sleeper.leagues(sleeperUser.user_id,season)))).flat();const allowed=new Set(available.map(league=>league.league_id));if(leagueIds.some(id=>!allowed.has(id)))return res.status(403).json({error:'A selected league does not belong to the claimed Sleeper account.'});}const auth=res.locals.auth as Authentication;const updated={...auth.user,sleeperUserId:sleeperUser.user_id,sleeperUsername:sleeperUser.username,sleeperLeagueIds:[...new Set(leagueIds)]};await store.saveApplicationUser(updated);
+   // The connection set follows the linked accounts, and a newly linked league is queued rather than
+   // waiting up to a full interval for its first synchronization.
+   await store.reconcileLeagueConnections();
+   for(const id of updated.sleeperLeagueIds) worker.enqueue(id,{reason:'connect'});
+   res.json({user:publicUser(updated),verification:'claimed'});}catch(error){next(error);}});
 
  app.param('leagueId',(req,res,next,value)=>{const user=(res.locals.auth as Authentication).user;if(value==='demo'&&demoEnabled())return next();if(!user.sleeperLeagueIds.includes(value))return res.status(403).json({error:'This league is not linked to the authenticated account.'});next();});
  app.get('/api/trades/:leagueId',recommendations, async (req, res, next) => {
@@ -52,7 +77,12 @@ export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync 
      if (String(req.params.leagueId) === 'demo' && demoEnabled()) return res.json(recommendTrades({ ...demoTradeInput(new Date(), req.query.format === 'dynasty'), bounds }));
      const week = Number(req.query.week), userId = (res.locals.auth as Authentication).user.sleeperUserId;
      if (typeof req.query.week !== 'string' || !Number.isInteger(week) || week < 1 || week > 18 || !userId) return res.status(400).json({ error: 'Link a Sleeper account and provide an integer week from 1 to 18.' });
-     try { await sync.syncLeague(String(req.params.leagueId), week, req.query.force === 'true'); } catch (error) {
+     // A forced refresh is queued for the worker rather than run here: this request answers from the
+     // last good snapshot, and the fan-out happens under the worker's concurrency limit and its locks.
+     // The cached synchronization below stays inline — it is bounded by REFRESH_AFTER_MS and usually
+     // fetches nothing at all.
+     if (req.query.force === 'true') worker.enqueue(String(req.params.leagueId), { reason: 'manual', force: true, week });
+     try { await sync.syncLeague(String(req.params.leagueId), week); } catch (error) {
        if ((await store.league(String(req.params.leagueId)))?.scoring?.kind !== 'unavailable') throw error;
      }
      const context = await store.tradeContext(String(req.params.leagueId));
@@ -69,7 +99,12 @@ export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync 
      if (String(req.params.leagueId) === 'demo' && demoEnabled()) return res.json(analyzeLineup(demoLineupInput()));
      const week = Number(req.query.week), userId = (res.locals.auth as Authentication).user.sleeperUserId;
      if (typeof req.query.week !== 'string' || !Number.isInteger(week) || week < 1 || week > 18 || !userId) return res.status(400).json({ error: 'Link a Sleeper account and provide an integer week from 1 to 18.' });
-     try { await sync.syncLeague(String(req.params.leagueId), week, req.query.force === 'true'); } catch (error) {
+     // A forced refresh is queued for the worker rather than run here: this request answers from the
+     // last good snapshot, and the fan-out happens under the worker's concurrency limit and its locks.
+     // The cached synchronization below stays inline — it is bounded by REFRESH_AFTER_MS and usually
+     // fetches nothing at all.
+     if (req.query.force === 'true') worker.enqueue(String(req.params.leagueId), { reason: 'manual', force: true, week });
+     try { await sync.syncLeague(String(req.params.leagueId), week); } catch (error) {
        if ((await store.league(String(req.params.leagueId)))?.scoring?.kind !== 'unavailable') throw error;
      }
      const league = await store.league(String(req.params.leagueId));
@@ -91,7 +126,12 @@ export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync 
      const week = Number(req.query.week);
      const userId = (res.locals.auth as Authentication).user.sleeperUserId;
      if (!Number.isInteger(week) || week < 1 || week > 18 || !userId) return res.status(400).json({ error: 'Link a Sleeper account and provide an integer week from 1 to 18.' });
-     try { await sync.syncLeague(String(req.params.leagueId), week, req.query.force === 'true'); } catch (error) {
+     // A forced refresh is queued for the worker rather than run here: this request answers from the
+     // last good snapshot, and the fan-out happens under the worker's concurrency limit and its locks.
+     // The cached synchronization below stays inline — it is bounded by REFRESH_AFTER_MS and usually
+     // fetches nothing at all.
+     if (req.query.force === 'true') worker.enqueue(String(req.params.leagueId), { reason: 'manual', force: true, week });
+     try { await sync.syncLeague(String(req.params.leagueId), week); } catch (error) {
        if ((await store.league(String(req.params.leagueId)))?.scoring?.kind !== 'unavailable') throw error;
      }
      const context = await store.waiverContext(String(req.params.leagueId));
@@ -107,7 +147,30 @@ export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync 
    } catch (error) { next(error); }
  });
  app.get('/api/dashboard/:leagueId',dashboards,async(req,res)=>{let data=await store.snapshot(String(req.params.leagueId)); if(!data&&String(req.params.leagueId)==='demo'&&demoEnabled()){data=demoSnapshot();await store.save(data);} if(!data)return res.status(404).json({error:'League not synced'});res.json(String(req.params.leagueId) === 'demo' && demoEnabled() ? data : { ...data, scoring: (await store.league(String(req.params.leagueId)))?.scoring ?? scoringUnavailable(), recommendations: [] });});
- app.post('/api/sync/:leagueId',synchronizations,async(req,res,next)=>{try{if(String(req.params.leagueId)==='demo'&&demoEnabled()){const data=demoSnapshot();await store.save(data);return res.json(data);}const week=Math.max(1,Math.min(18,Number(req.query.week)||1));res.json(await sync.syncLeague(String(req.params.leagueId),week,req.query.force==='true'));}catch(error){next(error);}});
+ /**
+  * Manual refresh.
+  *
+  * The request queues the same job the scheduler runs and returns immediately. Synchronizing a league
+  * inline would mean a browser waiting on up to seven upstream calls, with as many of those fan-outs in
+  * flight as there are people pressing the button — precisely the load the worker exists to bound. The
+  * response carries the queue position and the last recorded outcome so the client can report progress,
+  * and the dashboard keeps serving the last good snapshot throughout.
+  */
+ app.post('/api/sync/:leagueId',synchronizations,async(req,res,next)=>{try{
+   const leagueId=String(req.params.leagueId);
+   if(leagueId==='demo'&&demoEnabled()){const data=demoSnapshot();await store.save(data);return res.json(data);}
+   const requested=Number(req.query.week);
+   const week=Number.isInteger(requested)&&requested>=1&&requested<=18?requested:undefined;
+   await store.connectLeague(leagueId,{season:(await store.league(leagueId))?.season??null,...(week!==undefined?{week}:{})});
+   const job=worker.enqueue(leagueId,{reason:'manual',force:req.query.force==='true',week});
+   res.status(202).json(await syncState(store,worker,leagueId,job));
+ }catch(error){next(error);}});
+ /** Progress for a queued refresh, and why a snapshot is as old as it is when one is failing. */
+ app.get('/api/sync/:leagueId',dashboards,async(req,res,next)=>{try{
+   const leagueId=String(req.params.leagueId);
+   if(leagueId==='demo'&&demoEnabled())return res.json({leagueId,queued:false,running:false,demo:true,lastSyncedAt:(await store.snapshot('demo'))?.lastSyncedAt??null});
+   res.json(await syncState(store,worker,leagueId));
+ }catch(error){next(error);}});
  app.get('/api/sleeper/users/:username',lookups,async(req,res,next)=>{try{const user=await sleeper.user(String(req.params.username));if(!user)return res.status(404).json({error:'No Sleeper account was found for that username.'});res.json(user);}catch(error){next(error);}});
  app.get('/api/sleeper/users/:userId/leagues',lookups,async(req,res,next)=>{try{const linked=(res.locals.auth as Authentication).user.sleeperUserId;if(String(req.params.userId)!==linked)return res.status(403).json({error:'Only the linked Sleeper account may be queried.'});const current=new Date().getUTCFullYear();const requested=typeof req.query.seasons==='string'?req.query.seasons.split(','):[current,current-1,current-2].map(String);const seasons=requested.filter(season=>/^\d{4}$/.test(season)).slice(0,6);if(!seasons.length)return res.status(400).json({error:'Provide at least one valid season.'});const results=await Promise.all(seasons.map(async season=>({season,leagues:await sleeper.leagues(String(req.params.userId),season)})));res.json({seasons:results,lastSyncedAt:new Date().toISOString()});}catch(error){next(error);}});
  app.get('/api/sleeper/leagues/:leagueId',leagueDetail,async(req,res,next)=>{try{const leagueId=String(req.params.leagueId);const week=Math.max(1,Number(req.query.week)||1);const round=Math.max(1,Number(req.query.round)||week);const [league,rosters,users,matchups,transactions,drafts,tradedPicks]=await Promise.all([sync.synchronizeLeagueMetadata(leagueId),sleeper.rosters(leagueId),sleeper.leagueUsers(leagueId),sleeper.matchups(leagueId,week),sleeper.transactions(leagueId,round),sleeper.drafts(leagueId),sleeper.tradedPicks(leagueId)]);res.json({league,scoring:(await store.league(leagueId))?.scoring,rosters,users,matchups,transactions,drafts,tradedPicks,lastSyncedAt:new Date().toISOString()});}catch(error){next(error);}});

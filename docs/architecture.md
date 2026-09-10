@@ -8,7 +8,7 @@ Browser (React + shared UI)
         ▼
 Express API ── recommendation rules (@sleeper/domain)
    │    │
-   │    └── scheduler (startup + configurable interval)
+   │    └── league synchronization worker (one instance, leased)
    │              │
    ▼              ▼
 JSON snapshot store     typed Sleeper client
@@ -21,17 +21,17 @@ JSON snapshot store     typed Sleeper client
 
 1. The browser authenticates to the API and asks for a league dashboard snapshot.
 2. The API serves the last successfully persisted snapshot, keeping reads fast and isolating the UI from upstream failures.
-3. At process startup and every `SYNC_INTERVAL_MINUTES`, the scheduler requests supported public data through the Sleeper client, normalizes it, evaluates domain rules, and atomically replaces the stored snapshot.
-4. Manual refresh queues the same idempotent synchronization path. The UI displays the stored `lastSyncedAt` value.
+3. At process startup and every `SYNC_INTERVAL_MINUTES`, the synchronization worker loads the persisted set of active league connections, resolves each league's season and week, and synchronizes a bounded number of them at a time through the Sleeper client, normalizing the results and atomically replacing the stored snapshot. Each attempt records its outcome, failure category, duration, per-resource freshness and next attempt time on the connection.
+4. Manual refresh queues that same job and returns immediately; no HTTP request fans out to Sleeper on the caller's behalf. The UI displays the stored `lastSyncedAt` value and the queued state. See [`docs/league-sync.md`](league-sync.md).
 5. Recommendation buttons open analysis or direct users to Sleeper; they never mutate a Sleeper league.
 
 ## Storage model
 
-The local adapter persists a versionable JSON document containing snapshots keyed by league ID and a bounded synchronization log. Writes use a temporary file followed by an atomic rename. Production deployments should implement the same repository interface with PostgreSQL: `users`, `league_connections`, `league_snapshots`, `recommendations`, and `sync_runs`. Encrypt any session material at rest and keep it separate from public Sleeper IDs.
+The local adapter persists a versionable JSON document containing snapshots keyed by league ID, the active league connections with the week each is tracking and the outcome of its last attempt, the worker's leases, and a bounded synchronization log. Writes use a temporary file followed by an atomic rename. Production deployments should implement the same repository interface with PostgreSQL: `users`, `league_connections`, `league_snapshots`, `recommendations`, and `sync_runs`. Encrypt any session material at rest and keep it separate from public Sleeper IDs.
 
 ## Deployment model
 
-Build the web application as static assets served through a CDN. Run the API as a single container with a persistent volume for the local profile or PostgreSQL for horizontally scaled deployments. In scaled production, move interval work to one dedicated worker or managed cron job and use a distributed lock. Terminate TLS at the edge, restrict CORS to the web origin, inject configuration through environment variables, rotate bearer/session keys, and expose `/health` to orchestration.
+Build the web application as static assets served through a CDN. Run the API as a single container with a persistent volume for the local profile or PostgreSQL for horizontally scaled deployments. In scaled production, run the synchronization worker on one instance or as a managed job (`SYNC_WORKER_ENABLED=false` everywhere else) and implement `SyncLock` over the database rather than the JSON store: the sweep lease keeps one instance in charge and the per-league lease keeps a league from being synchronized twice at once, but the file-backed implementation is only atomic within a process. See [`docs/league-sync.md`](league-sync.md). Terminate TLS at the edge, restrict CORS to the web origin, inject configuration through environment variables, rotate bearer/session keys, and expose `/health` to orchestration.
 
 ### Scoring provenance and validation
 

@@ -29,6 +29,27 @@ export async function post<T>(path: string, body: unknown): Promise<T> {
   if (!response.ok) throw failed(response.status, value);
   return value as T;
 }
+/**
+ * What the API reports about a league's background synchronization.
+ *
+ * A refresh is a request to the worker rather than an upstream fetch held open inside it, so the
+ * useful answer is a state — queued, running, last succeeded at, waiting until — rather than a
+ * synchronized league.
+ */
+export interface SyncQueueState {
+  leagueId: string; queued: boolean; running: boolean; queuePosition: number | null; queuedAt: string | null;
+  season: string | null; week: number | null;
+  lastSyncedAt: string | null; lastStatus: 'success' | 'failed' | null; lastCategory: string | null;
+  lastDurationMs: number | null; lastRefreshed: string[]; nextAttemptAt: string | null; consecutiveFailures: number;
+}
+/** Queues the same job the scheduler runs. Returns as soon as it is queued, not when it completes. */
+export function queueSync(leagueId: string, week?: number) {
+  const query = typeof week === 'number' && Number.isInteger(week) ? `?week=${week}` : '';
+  return post<SyncQueueState>(`/api/sync/${encodeURIComponent(leagueId)}${query}`, {});
+}
+export function syncState(leagueId: string, signal?: AbortSignal) {
+  return request<SyncQueueState>(`/api/sync/${encodeURIComponent(leagueId)}`, signal);
+}
 export interface AccountUser { id: string; login: string; sleeperUserId?: string; sleeperUsername?: string; sleeperLeagueIds: string[]; }
 /** Restores a reload from the session cookie alone; returns null when there is no live session to resume. */
 export async function resumeSession(): Promise<AccountUser | null> {

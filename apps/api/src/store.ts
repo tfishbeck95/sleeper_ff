@@ -17,6 +17,61 @@ export interface ApplicationSession {
 }
 export type SessionRevocation = 'logout' | 'logout-all' | 'rotated' | 'expired' | 'reuse-detected' | 'user-removed';
 
+export type SyncStatus = 'success' | 'failed';
+/**
+ * One connected league, and the week it is currently being synchronized for.
+ *
+ * The set of these records — not the union of every league id a Sleeper account has ever seen — is
+ * what the background worker schedules. It is derived from the linked accounts on every sweep, so a
+ * league that is unlinked stops being scheduled without anything else having to remember to stop it.
+ *
+ * The outcome fields are the record of the last attempt rather than a running log: what happened, how
+ * long it took, which failure category ended it, how fresh each upstream resource is, and when the
+ * next attempt is due. `nextAttemptAt` is authoritative for scheduling — it carries upstream's own
+ * `Retry-After` when Sleeper sent one, and this worker's backoff when it did not.
+ */
+export interface LeagueConnection {
+  leagueId: string;
+  /** The sample league is a development affordance, and is never scheduled in production. */
+  demo: boolean;
+  status: 'active' | 'archived';
+  /** True while at least one application account still links the league. Pruning requires false. */
+  linked: boolean;
+  /** The league's own season, carried from Sleeper's metadata rather than the host calendar. */
+  season: string | null;
+  /** The NFL week this connection is tracking. Persisted so a restart resumes where it left off. */
+  week: number | null;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt?: string;
+  archivedReason?: string;
+  lastAttemptedAt?: string;
+  /** The last attempt that succeeded. Retained through failures: it is what the UI still shows. */
+  lastSyncedAt?: string;
+  lastStatus?: SyncStatus;
+  lastCategory?: string;
+  lastDurationMs?: number;
+  lastRefreshed?: string[];
+  /** Per-resource synchronization timestamps as of the last attempt, so staleness is per resource. */
+  resourceFreshness?: Record<string, string>;
+  consecutiveFailures: number;
+  nextAttemptAt?: string;
+}
+/** What one synchronization attempt produced, as recorded against its connection. */
+export interface SyncAttempt {
+  status: SyncStatus; at: string; durationMs: number;
+  category?: string; refreshed?: string[]; season?: string | null; week?: number | null;
+  resourceFreshness?: Record<string, string>; nextAttemptAt?: string; consecutiveFailures?: number;
+}
+/**
+ * A lease held by one worker over one key.
+ *
+ * Leases expire rather than being released only on a clean exit, so a worker killed mid-sweep does not
+ * hold the schedule shut until someone notices. See `StoreSyncLock` for what this store's
+ * single-file implementation can and cannot promise across processes.
+ */
+export interface SyncLease { key: string; owner: string; acquiredAt: string; expiresAt: string; }
+
 export interface StoreShape {
   snapshots: Record<string, LeagueSnapshot>;
   leagues: Record<string, League>; users: Record<string, User>; players: Record<string, NflPlayer>;
@@ -25,9 +80,10 @@ export interface StoreShape {
   freshness: Record<string, string>;
   applicationUsers: Record<string, ApplicationUser>; sessions: Record<string, ApplicationSession>;
   syncLog: { leagueId: string; syncedAt: string; status: 'success' | 'failed'; category?: string; durationMs?: number }[];
+  leagueConnections: Record<string, LeagueConnection>; leases: Record<string, SyncLease>;
 }
 function revoke(session: ApplicationSession | undefined, reason: SessionRevocation, at: string) { if (!session || session.revokedAt) return; session.revokedAt = at; session.revokedReason = reason; }
-const empty = (): StoreShape => ({ snapshots: {}, leagues: {}, users: {}, players: {}, rosters: {}, matchups: {}, transactions: {}, draftPicks: {}, weeklySnapshots: [], freshness: {}, applicationUsers: {}, sessions: {}, syncLog: [] });
+const empty = (): StoreShape => ({ snapshots: {}, leagues: {}, users: {}, players: {}, rosters: {}, matchups: {}, transactions: {}, draftPicks: {}, weeklySnapshots: [], freshness: {}, applicationUsers: {}, sessions: {}, syncLog: [], leagueConnections: {}, leases: {} });
 export interface SyncWrite { league?: League; users?: User[]; players?: NflPlayer[]; rosters?: Roster[]; matchups?: Matchup[]; transactions?: Transaction[]; draftPicks?: TradedDraftPick[]; replaceDraftPicksForLeague?: string; weeklySnapshot?: WeeklySnapshot; freshness?: Record<string, string>; }
 
 export class JsonStore {
@@ -82,6 +138,145 @@ export class JsonStore {
   async allPlayers() { return Object.values((await this.read()).players); }
   /** Every connected league, so a process-wide job can ask which of them have live scoring. */
   async allLeagues() { return Object.values((await this.read()).leagues); }
+
+  // --- Connected leagues -------------------------------------------------------------------------
+  async leagueConnections() { return Object.values((await this.read()).leagueConnections); }
+  async leagueConnection(leagueId: string) { return (await this.read()).leagueConnections[leagueId]; }
+  async activeLeagueConnections() { return (await this.leagueConnections()).filter(connection => connection.status === 'active'); }
+  /**
+   * Registers a league as connected, or revives one that was archived for being unlinked.
+   *
+   * A record archived by the retention policy stays archived: re-linking a finished 2024 league is a
+   * request to keep its data, not a request to start synchronizing a season that cannot change.
+   */
+  async connectLeague(leagueId: string, options: { demo?: boolean; season?: string | null; week?: number | null; at?: string } = {}) {
+    const at = options.at ?? new Date().toISOString();
+    let result!: LeagueConnection;
+    await this.write(data => {
+      const existing = data.leagueConnections[leagueId];
+      const connection: LeagueConnection = existing
+        ? { ...existing, linked: true, updatedAt: at }
+        : { leagueId, demo: false, status: 'active', linked: true, season: null, week: null, createdAt: at, updatedAt: at, consecutiveFailures: 0 };
+      if (!existing || (connection.status === 'archived' && connection.archivedReason === 'unlinked')) {
+        connection.status = 'active'; delete connection.archivedAt; delete connection.archivedReason;
+      }
+      if (options.demo !== undefined) connection.demo = options.demo;
+      if (options.season) connection.season = options.season;
+      if (typeof options.week === 'number') connection.week = options.week;
+      result = data.leagueConnections[leagueId] = connection;
+    });
+    return result;
+  }
+  async updateLeagueConnection(leagueId: string, patch: Partial<LeagueConnection>, at = new Date().toISOString()) {
+    await this.write(data => { const connection = data.leagueConnections[leagueId]; if (connection) Object.assign(connection, patch, { updatedAt: at }); });
+  }
+  async archiveLeagueConnection(leagueId: string, reason: string, at = new Date().toISOString()) {
+    await this.write(data => {
+      const connection = data.leagueConnections[leagueId];
+      if (!connection || connection.status === 'archived') return;
+      Object.assign(connection, { status: 'archived', archivedAt: at, archivedReason: reason, updatedAt: at, nextAttemptAt: undefined });
+    });
+  }
+  /**
+   * Brings the connection set in line with the leagues the application accounts actually link.
+   *
+   * Run before every sweep rather than only at connect time, so an account edited by another instance,
+   * or a store restored from a backup, converges without an operator having to reconcile it by hand.
+   */
+  async reconcileLeagueConnections(at = new Date().toISOString(), demoLeagueIds: readonly string[] = ['demo']) {
+    let result: LeagueConnection[] = [];
+    await this.write(data => {
+      const linked = new Set(Object.values(data.applicationUsers).flatMap(user => user.sleeperLeagueIds));
+      for (const leagueId of linked) {
+        const existing = data.leagueConnections[leagueId];
+        const demo = demoLeagueIds.includes(leagueId);
+        if (!existing) {
+          data.leagueConnections[leagueId] = { leagueId, demo, status: 'active', linked: true, season: data.leagues[leagueId]?.season ?? null, week: null, createdAt: at, updatedAt: at, consecutiveFailures: 0 };
+          continue;
+        }
+        const revive = existing.status === 'archived' && existing.archivedReason === 'unlinked';
+        Object.assign(existing, { linked: true, demo, updatedAt: at, ...(revive ? { status: 'active', archivedAt: undefined, archivedReason: undefined } : {}) });
+      }
+      for (const connection of Object.values(data.leagueConnections)) {
+        if (linked.has(connection.leagueId)) continue;
+        Object.assign(connection, { linked: false, updatedAt: at });
+        if (connection.status === 'active') Object.assign(connection, { status: 'archived', archivedAt: at, archivedReason: 'unlinked', nextAttemptAt: undefined });
+      }
+      result = Object.values(data.leagueConnections);
+    });
+    return result;
+  }
+  /**
+   * Records what one attempt did against its connection.
+   *
+   * A failure never clears `lastSyncedAt` or any stored league data: the last good snapshot is what the
+   * dashboard keeps serving while Sleeper is unavailable, and the failure category plus `nextAttemptAt`
+   * are what say why it is not newer.
+   */
+  async recordLeagueSyncAttempt(leagueId: string, attempt: SyncAttempt) {
+    await this.write(data => {
+      const connection = data.leagueConnections[leagueId] ?? (data.leagueConnections[leagueId] = { leagueId, demo: false, status: 'active', linked: false, season: null, week: null, createdAt: attempt.at, updatedAt: attempt.at, consecutiveFailures: 0 });
+      connection.updatedAt = attempt.at;
+      connection.lastAttemptedAt = attempt.at;
+      connection.lastStatus = attempt.status;
+      connection.lastDurationMs = attempt.durationMs;
+      connection.lastCategory = attempt.status === 'failed' ? attempt.category ?? 'internal' : undefined;
+      connection.nextAttemptAt = attempt.nextAttemptAt;
+      connection.consecutiveFailures = attempt.consecutiveFailures ?? (attempt.status === 'failed' ? connection.consecutiveFailures + 1 : 0);
+      if (attempt.season) connection.season = attempt.season;
+      if (typeof attempt.week === 'number') connection.week = attempt.week;
+      if (attempt.resourceFreshness) connection.resourceFreshness = attempt.resourceFreshness;
+      if (attempt.status === 'success') { connection.lastSyncedAt = attempt.at; connection.lastRefreshed = attempt.refreshed ?? []; }
+    });
+  }
+  /** Per-resource synchronization timestamps for one league, plus the shared player directory. */
+  async resourceFreshness(leagueId: string) {
+    const { freshness } = await this.read();
+    return Object.fromEntries(Object.entries(freshness).filter(([key]) => key.split(':')[1] === leagueId || key === 'players:nfl'));
+  }
+  /**
+   * Deletes one league's stored data and its connection.
+   *
+   * Only ever called for a connection the retention policy has already archived and no account links;
+   * the shared player directory is deliberately untouched, because it belongs to every league.
+   */
+  async pruneLeague(leagueId: string) {
+    let removed = 0;
+    await this.write(data => {
+      const drop = <T>(target: Record<string, T>, matches: (value: T) => boolean) => { for (const [key, value] of Object.entries(target)) if (matches(value)) { delete target[key]; removed++; } };
+      delete data.leagues[leagueId]; delete data.snapshots[leagueId]; delete data.leagueConnections[leagueId];
+      drop(data.rosters, value => value.leagueId === leagueId); drop(data.matchups, value => value.leagueId === leagueId);
+      drop(data.transactions, value => value.leagueId === leagueId); drop(data.draftPicks, value => value.leagueId === leagueId);
+      data.weeklySnapshots = data.weeklySnapshots.filter(snapshot => snapshot.leagueId !== leagueId);
+      for (const key of Object.keys(data.freshness)) if (key.split(':')[1] === leagueId) delete data.freshness[key];
+      data.syncLog = data.syncLog.filter(entry => entry.leagueId !== leagueId);
+    });
+    return removed;
+  }
+
+  // --- Leases ------------------------------------------------------------------------------------
+  /**
+   * Takes the lease on `key`, or returns null when another owner still holds a live one.
+   *
+   * Read and write happen inside one queued store operation, so within a process this is atomic. Two
+   * processes sharing one JSON file can still interleave; that profile is single-instance by design,
+   * and a horizontally scaled deployment supplies a lock backed by its database instead. See
+   * docs/league-sync.md.
+   */
+  async acquireLease(key: string, owner: string, ttlMs: number, now = new Date()) {
+    let lease: SyncLease | null = null;
+    await this.write(data => {
+      const held = data.leases[key];
+      const live = held && Date.parse(held.expiresAt) > now.getTime();
+      if (live && held.owner !== owner) return;
+      lease = data.leases[key] = { key, owner, acquiredAt: live && held.owner === owner ? held.acquiredAt : now.toISOString(), expiresAt: new Date(now.getTime() + ttlMs).toISOString() };
+    });
+    return lease as SyncLease | null;
+  }
+  async releaseLease(key: string, owner: string) {
+    await this.write(data => { if (data.leases[key]?.owner === owner) delete data.leases[key]; });
+  }
+  async lease(key: string) { return (await this.read()).leases[key]; }
   async waiverContext(leagueId: string) {
     const data = await this.read();
     return { league: data.leagues[leagueId], rosters: Object.values(data.rosters).filter(r => r.leagueId === leagueId), players: Object.values(data.players) };
