@@ -1,7 +1,6 @@
 import { demoEnabled } from '../auth.js';
-import type { JsonStore } from '../store.js';
 import { StoreSyncLock, workerIdentity } from './lock.js';
-import { DEFAULT_RETENTION, LeagueSyncWorker, type LeagueSynchronizer, type LeagueSyncWorkerOptions } from './worker.js';
+import { DEFAULT_RETENTION, LeagueSyncWorker, type LeagueSynchronizer, type LeagueSyncWorkerOptions, type LeagueSyncWorkerRepository } from './worker.js';
 
 /**
  * Worker configuration from the process environment.
@@ -45,7 +44,7 @@ export function leagueSyncWorkerOptions(env: NodeJS.ProcessEnv = process.env): L
   };
 }
 
-export function configureLeagueSyncWorker(store: JsonStore, sync: LeagueSynchronizer, options: LeagueSyncWorkerOptions = {}, env: NodeJS.ProcessEnv = process.env): LeagueSyncWorker {
+export function configureLeagueSyncWorker(store: LeagueSyncWorkerRepository, sync: LeagueSynchronizer, options: LeagueSyncWorkerOptions = {}, env: NodeJS.ProcessEnv = process.env): LeagueSyncWorker {
   const fromEnv = leagueSyncWorkerOptions(env);
   return new LeagueSyncWorker(store, sync, { ...fromEnv, lock: new StoreSyncLock(store, workerIdentity(env)), ...options });
 }

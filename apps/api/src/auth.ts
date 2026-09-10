@@ -1,7 +1,11 @@
 import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import type express from 'express';
-import type { ApplicationSession, ApplicationUser, JsonStore } from './store.js';
+import type { ApplicationSession, ApplicationUser } from './store.js';
+import type { ApplicationUserRepository, SessionRepository } from './storage/repositories.js';
+
+/** Authentication needs accounts and sessions, and nothing else the repository holds. */
+type AuthenticationRepository = ApplicationUserRepository & SessionRepository;
 
 const scrypt = promisify(scryptCallback);
 const HOUR = 3_600_000, MINUTE = 60_000;
@@ -68,7 +72,7 @@ function cookie(req: express.Request) { const name = cookieName(); return req.he
 export interface Authentication { user: ApplicationUser; session: ApplicationSession; rawSessionId: string; }
 
 /** Issues a brand new session family. Callers use it for login only; live sessions rotate instead. */
-export async function issueSession(store: JsonStore, user: ApplicationUser, policy = sessionPolicy()) {
+export async function issueSession(store: AuthenticationRepository, user: ApplicationUser, policy = sessionPolicy()) {
   const rawSessionId = token(), csrfToken = token(), now = new Date();
   const absoluteExpiresAt = new Date(now.getTime() + policy.absoluteMs).toISOString();
   const session: ApplicationSession = {
@@ -83,7 +87,7 @@ export async function issueSession(store: JsonStore, user: ApplicationUser, poli
 }
 
 /** Rotates the session id inside its family, preserving the CSRF tokens the client already holds. */
-export async function rotateSession(store: JsonStore, current: ApplicationSession, policy = sessionPolicy(), now = new Date()) {
+export async function rotateSession(store: AuthenticationRepository, current: ApplicationSession, policy = sessionPolicy(), now = new Date()) {
   const rawSessionId = token();
   const absolute = Date.parse(current.absoluteExpiresAt);
   const next: ApplicationSession = {
@@ -95,13 +99,13 @@ export async function rotateSession(store: JsonStore, current: ApplicationSessio
 }
 
 /** Adds a CSRF token to the session so a reloaded page (or a second tab) can mutate without signing in again. */
-export async function issueCsrfToken(store: JsonStore, session: ApplicationSession) {
+export async function issueCsrfToken(store: AuthenticationRepository, session: ApplicationSession) {
   const csrfToken = token();
   await store.addSessionCsrfHash(session.idHash, digest(csrfToken));
   return csrfToken;
 }
 
-export function authentication(store: JsonStore, policy = sessionPolicy()) {
+export function authentication(store: AuthenticationRepository, policy = sessionPolicy()) {
   return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const rawSessionId = cookie(req);
     if (!rawSessionId) return res.status(401).json({ error: 'Authentication required.' });
