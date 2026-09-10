@@ -50,6 +50,8 @@ svg { flex-shrink: 0; }
 .account-button strong { font-size: 12px; display: block; overflow-wrap: anywhere; }
 .account-button small { color: #a7b9ac; font-size: 12px; display: block; margin-top: 3px; }
 .account-button>svg { margin-left: auto; }
+.sign-out-button { display: block; width: 100%; margin-top: 12px; padding: 8px 4px; border: 0; border-radius: 7px; background: transparent; color: #a7b9ac; font-size: 12px; text-align: left; cursor: pointer; }
+.sign-out-button:hover { color: #e7eee8; background: #24382c; }
 .dashboard-workspace { margin-left: 216px; }
 .topbar { height: 72px; border-bottom: 1px solid var(--line); background: #fff; padding: 0 36px; display: flex; align-items: center; justify-content: space-between; }
 .breadcrumb, .topbar-actions { display: flex; align-items: center; gap: 13px; }

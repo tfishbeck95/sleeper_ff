@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. Configure an application login first; session cookies require HTTPS. Demo authentication is a separate, explicit development-only opt-in. See [`docs/identity-and-sessions.md`](docs/identity-and-sessions.md).
+Open `http://localhost:5173`. Configure an application login first; session cookies require HTTPS, or `INSECURE_DEV_COOKIES=true` on a development machine without it. Sessions expire, rotate and can be revoked, mutating requests carry a CSRF token, and league access is derived from the session rather than the request. Demo authentication and every sample-league response are a separate, explicit development-only opt-in that production refuses to serve. See [`docs/identity-and-sessions.md`](docs/identity-and-sessions.md).
 
 ## Commands
 

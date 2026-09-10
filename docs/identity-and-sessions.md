@@ -2,18 +2,46 @@
 
 ## Product identity policy
 
-Sleeper's documented public API does not authenticate ownership of an account. Huddle therefore treats a linked public Sleeper username as a **claimed association**, not verified identity. It must never be presented as proof that the application user owns that Sleeper account.
+Sleeper's documented public API does not authenticate ownership of an account. Huddle therefore treats a linked public Sleeper username as a **claimed association**, not verified identity. It must never be presented as proof that the application user owns that Sleeper account, and the API labels it as `claimed` when the link is saved.
 
-A private, single-user installation must protect the entire application with a long, unique private login password (or an upstream access gateway). A multi-user launch must replace the private login with an application identity provider supporting verified identities and account recovery. The claimed-association label remains mandatory unless Sleeper introduces a supported ownership-verification mechanism. Do not request, collect, or proxy Sleeper passwords or Sleeper session cookies.
+**Single-user installation.** The supported configuration today. One application login, protected by a long unique password (or an upstream access gateway), guards the entire application. The claimed association is safe here because the only person who can create it is the person who owns the installation. There is no account recovery: losing the password means generating a new hash and restarting.
+
+**Multi-user launch.** Not supported by this configuration, and the private login must not simply be handed to several people. Before opening the application to more than one person it needs an application identity provider with verified identities, account recovery and an administrative interface, plus a shared transactional session store (below). Until Sleeper offers an ownership-verification mechanism, the claimed-association label stays mandatory even then — one user could otherwise link another person's Sleeper username and their leagues would appear to be endorsed by the application.
+
+Never request, collect, or proxy Sleeper passwords or Sleeper session cookies, in any configuration.
 
 ## Security model
 
-Application users and sessions are persisted separately from public Sleeper users. A user record stores the selected Sleeper user ID and an allow-list of selected league IDs. Protected league routes first authenticate the application session, then obtain the Sleeper ID and league authorization only from that record; client-supplied `userId` values are not identity inputs.
+Application users and sessions are persisted separately from the public Sleeper users pulled in by synchronization. A user record stores the claimed Sleeper user ID and an allow-list of selected league IDs, and the selection is verified against the leagues Sleeper reports for that account before it is saved.
 
-Passwords use Node's `scrypt` with a random salt. Session and CSRF secrets contain 256 bits of randomness; only SHA-256 digests are stored. Session cookies are `HttpOnly`, `Secure`, `SameSite=Strict`, host-only cookies. Sessions expire, can be rotated, are revoked at logout, and support administrative user-wide revocation in the store. Mutating API routes require a per-session CSRF header.
+**Authorization.** Protected routes authenticate the session first, then read the Sleeper ID and the league allow-list only from the session's user record. A `userId` or league id in the request is a lookup key that must already be authorized, never an identity input: `/api/sleeper/users/:userId/leagues` refuses any id but the linked one, every `:leagueId` route refuses a league that is not in the allow-list, and roster-scoped analysis matches the roster by the session's Sleeper ID as owner or co-owner.
 
-Demo login is opt-in with `ENABLE_DEMO_AUTH=true`, is unavailable in production, and production startup fails closed if it is enabled. Production also refuses to start without a password hash or configured identity provider.
+**Passwords.** Node's `scrypt` with a random 16-byte salt, stored as `scrypt:<salt>:<hash>`. An unknown login is verified against a throwaway hash so a failed sign-in costs the same as a successful one and response time does not disclose which logins exist.
+
+**Sessions.** Session ids and CSRF tokens are 256 bits of `randomBytes`; the store keeps only SHA-256 digests, so a leaked copy of `store.json` cannot be replayed as a session. The cookie is `HttpOnly`, `Secure`, `SameSite=Strict` and host-only (`__Host-` prefixed).
+
+A session has three independent limits:
+
+| Limit | Setting | Behaviour |
+| --- | --- | --- |
+| Absolute lifetime | `SESSION_TTL_HOURS` | Fixed at sign-in. Rotation carries it forward and never extends it. |
+| Idle window | `SESSION_IDLE_MINUTES` | Moves forward as the session is used, capped by the absolute lifetime. Clamped to the absolute lifetime if configured longer. |
+| Rotation interval | `SESSION_ROTATE_MINUTES` | A live session is issued a new id in place, transparently to the client. |
+
+Rotation keeps the session's CSRF tokens, so no client work is needed. The retired id stays usable for `SESSION_ROTATION_GRACE_SECONDS` so requests already in flight do not fail. **After that window a retired id can only be a copy**, so presenting one — like presenting an already revoked id — revokes every session in that rotation family. Logout revokes the family; signing out everywhere (`POST /auth/logout-all`) revokes every session belonging to the user, and the same store operation is what an administrator uses to cut off a compromised account. Sessions that can no longer authenticate anything are pruned at sign-in and on the synchronization cadence, so the store does not grow without bound.
+
+**CSRF.** Every mutating API request must carry `X-CSRF-Token` matching a token issued to that session; the token lives only in the client's memory, never in storage. `GET /auth/session` restores a reloaded page from its cookie and mints a fresh token, and a session holds the last few tokens it issued so a second tab does not invalidate the first.
+
+**Rate limits.** Per-address budgets on sign-in, plus a per-account budget so a botnet cannot grind one login from many addresses. Authenticated budgets are charged to the user, not the address: Sleeper lookups, synchronization, recommendations, dashboards, the seven-call league detail route, and an overall ceiling on authenticated traffic. Counters live in the API process and are swept and capped, so rotating source addresses cannot grow them without bound. `req.ip` is only the real client once `TRUST_PROXY` matches the number of proxies in front of the API.
+
+## Development and demo isolation
+
+Demo login and every sample-league response require `ENABLE_DEMO_AUTH=true` **and** a non-production `NODE_ENV`; production never serves either, whatever the flag says. `INSECURE_DEV_COOKIES=true` drops the `__Host-` prefix and `Secure` attribute for sign-in over plain http on a developer machine.
+
+Startup fails closed rather than starting in a weakened state. `validateAuthenticationConfig` refuses to start when production has demo authentication or insecure cookies enabled, has neither a password hash nor an identity provider, has a password hash that is not a scrypt hash, or has no `WEB_ORIGIN`; when `WEB_ORIGIN` is not an absolute https origin (http is accepted only for localhost outside production); or when any session setting is not a positive number.
 
 ## Operations
 
-Generate a hash with `npm run password-hash -w @sleeper/api -- 'a-long-unique-password'`, place it in `APP_LOGIN_PASSWORD_HASH`, and serve the application over HTTPS. Revoking a compromised account means calling the store's user-wide revocation operation (an administrative interface should wrap this before a multi-user launch). Session storage in the JSON file is suitable for a private deployment; multi-instance production requires a transactional shared database and distributed rate-limit store.
+Generate a hash with `npm run password-hash -w @sleeper/api -- 'a-long-unique-password'`, place it in `APP_LOGIN_PASSWORD_HASH`, and serve the application over HTTPS. Revoking a compromised account means calling the store's user-wide revocation operation; an administrative interface should wrap it before a multi-user launch.
+
+Session storage in the JSON file and in-process rate-limit counters suit a single-instance private deployment. Running more than one instance requires a transactional shared session store and a shared rate-limit store first — otherwise rotation can race between instances and each instance enforces its own separate budget.

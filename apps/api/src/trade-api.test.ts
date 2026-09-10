@@ -6,6 +6,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './app.js';
 import { JsonStore } from './store.js';
+import { signedInAs } from './test-support/auth.js';
+
+// These suites exercise the sample league routes, which production never serves.
+process.env.ENABLE_DEMO_AUTH = 'true';
 import { demoTradeInput } from './test-support/scoring-fixtures.js';
 import type { WaiverSignalProvider } from './waiver-signals.js';
 
@@ -17,27 +21,29 @@ async function fixture(provider?: WaiverSignalProvider) {
   await store.applySync({ league: input.league, rosters: input.rosters, players: input.players });
   let calls = 0;
   const app = createApp(store, undefined, { syncLeague: async () => { calls++; } } as never, provider ?? { load: async () => input.signals });
-  return { app, calls: () => calls };
+  return { app, store, calls: () => calls };
 }
-const auth = async (app: ReturnType<typeof createApp>, path: string) => { process.env.ENABLE_DEMO_AUTH='true'; const login=await request(app).post('/auth/demo'); return request(app).get(path).set('Cookie',login.headers['set-cookie'][0].split(';')[0]); };
+/** Each call signs in as a distinct application user, so ownership is decided by the session alone. */
+const auth = async (app: ReturnType<typeof createApp>, path: string, store: JsonStore, sleeperUserId = 'sample') => request(app).get(path).set('Cookie', (await signedInAs(store, { sleeperUserId, leagueIds: ['1234', 'demo'] })).cookie);
 test('trade API authenticates, validates bounds before sync and scopes owner/co-owner', async () => {
-  const { app, calls } = await fixture();
+  const { app, calls, store } = await fixture();
   assert.equal((await request(app).get('/api/trades/1234?week=8')).status, 401);
-  for (const query of ['week=0', 'week=8&week=9', 'week=8&maxRisk=NaN', 'week=8&maxResults=999', 'week=8&maxValueGap=-1', 'week=8&unknown=1']) assert.equal((await auth(app, `/api/trades/1234?${query}`)).status, 400, query);
+  for (const query of ['week=0', 'week=8&week=9', 'week=8&maxRisk=NaN', 'week=8&maxResults=999', 'week=8&maxValueGap=-1', 'week=8&unknown=1']) assert.equal((await auth(app, `/api/trades/1234?${query}`, store)).status, 400, query);
   assert.equal(calls(), 0);
-  const owner = await auth(app, '/api/trades/1234?week=8&maxValueGap=0');
+  const owner = await auth(app, '/api/trades/1234?week=8&maxValueGap=0', store);
   assert.equal(owner.status, 200); assert.equal(owner.body.rosterId, 1); assert.ok(owner.body.candidates.length); assert.ok(owner.body.candidates.every((c: { valueGap: number }) => c.valueGap === 0));
-  assert.equal((await auth(app, '/api/trades/1234?week=8')).body.rosterId, 1);
-  assert.equal((await auth(app, '/api/trades/1234?week=8')).status, 403);
-  assert.equal((await request(app).post('/api/trades/1234')).status, 404);
+  assert.equal((await auth(app, '/api/trades/1234?week=8', store, 'coowner')).body.rosterId, 1);
+  assert.equal((await auth(app, '/api/trades/1234?week=8', store, 'stranger')).status, 403);
+  const session = await signedInAs(store, { sleeperUserId: 'sample', leagueIds: ['1234'] });
+  assert.equal((await request(app).post('/api/trades/1234').set('Cookie', session.cookie).set('X-CSRF-Token', session.csrfToken)).status, 404);
 });
 test('missing provider returns unavailable without private errors; sample is explicit in both formats', async () => {
-  const { app } = await fixture({ load: async () => { throw new Error('/private/provider.json failed'); } });
-  const live = await auth(app, '/api/trades/1234?week=8');
+  const { app, store } = await fixture({ load: async () => { throw new Error('/private/provider.json failed'); } });
+  const live = await auth(app, '/api/trades/1234?week=8', store);
   assert.equal(live.status, 200); assert.equal(live.body.status, 'unavailable'); assert.deepEqual(live.body.candidates, []);
   assert.doesNotMatch(JSON.stringify(live.body), /private\/provider|Fictional/);
   for (const format of ['redraft', 'dynasty']) {
-    const demo = await auth(app, `/api/trades/demo?format=${format}`);
+    const demo = await auth(app, `/api/trades/demo?format=${format}`, store);
     assert.equal(demo.status, 200); assert.equal(demo.body.format, format); assert.deepEqual(demo.body.candidates, []); assert.equal(demo.body.scoring.kind, 'partial-reference');
   }
 });
