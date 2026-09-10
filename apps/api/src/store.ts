@@ -3,7 +3,19 @@ import { dirname } from 'node:path';
 import type { League, LeagueSnapshot, Matchup, NflPlayer, Roster, TradedDraftPick, Transaction, User, WeeklySnapshot } from '@sleeper/domain';
 
 export interface ApplicationUser { id: string; login: string; passwordHash: string; sleeperUserId?: string; sleeperUsername?: string; sleeperLeagueIds: string[]; createdAt: string; }
-export interface ApplicationSession { idHash: string; userId: string; csrfHash: string; createdAt: string; expiresAt: string; lastRotatedAt: string; revokedAt?: string; }
+/**
+ * A session record holds only digests: the raw session id and every CSRF token exist solely in the
+ * client's cookie jar and memory. `expiresAt` is the sliding idle deadline and moves forward while the
+ * session is used; `absoluteExpiresAt` is the hard cap that rotation carries forward and never extends.
+ * Rotation issues a new id inside the same `familyId`, marking the predecessor `supersededAt` so
+ * in-flight requests survive a short grace window and a later replay is recognised as token theft.
+ */
+export interface ApplicationSession {
+  idHash: string; userId: string; familyId: string; csrfHashes: string[];
+  createdAt: string; expiresAt: string; absoluteExpiresAt: string; lastRotatedAt: string; lastSeenAt: string;
+  supersededAt?: string; revokedAt?: string; revokedReason?: SessionRevocation;
+}
+export type SessionRevocation = 'logout' | 'logout-all' | 'rotated' | 'expired' | 'reuse-detected' | 'user-removed';
 
 export interface StoreShape {
   snapshots: Record<string, LeagueSnapshot>;
@@ -14,6 +26,7 @@ export interface StoreShape {
   applicationUsers: Record<string, ApplicationUser>; sessions: Record<string, ApplicationSession>;
   syncLog: { leagueId: string; syncedAt: string; status: 'success' | 'failed'; category?: string; durationMs?: number }[];
 }
+function revoke(session: ApplicationSession | undefined, reason: SessionRevocation, at: string) { if (!session || session.revokedAt) return; session.revokedAt = at; session.revokedReason = reason; }
 const empty = (): StoreShape => ({ snapshots: {}, leagues: {}, users: {}, players: {}, rosters: {}, matchups: {}, transactions: {}, draftPicks: {}, weeklySnapshots: [], freshness: {}, applicationUsers: {}, sessions: {}, syncLog: [] });
 export interface SyncWrite { league?: League; users?: User[]; players?: NflPlayer[]; rosters?: Roster[]; matchups?: Matchup[]; transactions?: Transaction[]; draftPicks?: TradedDraftPick[]; replaceDraftPicksForLeague?: string; weeklySnapshot?: WeeklySnapshot; freshness?: Record<string, string>; }
 
@@ -37,8 +50,33 @@ export class JsonStore {
   async saveApplicationUser(user: ApplicationUser) { await this.write(data => { data.applicationUsers[user.id] = user; }); }
   async session(idHash: string) { return (await this.read()).sessions[idHash]; }
   async saveSession(session: ApplicationSession) { await this.write(data => { data.sessions[session.idHash] = session; }); }
-  async revokeSession(idHash: string, at = new Date().toISOString()) { await this.write(data => { if (data.sessions[idHash]) data.sessions[idHash].revokedAt = at; }); }
-  async revokeUserSessions(userId: string, at = new Date().toISOString()) { await this.write(data => { for (const session of Object.values(data.sessions)) if (session.userId === userId) session.revokedAt = at; }); }
+  async revokeSession(idHash: string, reason: SessionRevocation = 'logout', at = new Date().toISOString()) { await this.write(data => { revoke(data.sessions[idHash], reason, at); }); }
+  /** Logout and theft detection act on the whole rotation family, so a superseded predecessor cannot be replayed. */
+  async revokeSessionFamily(familyId: string, reason: SessionRevocation, at = new Date().toISOString()) { await this.write(data => { for (const session of Object.values(data.sessions)) if (session.familyId === familyId) revoke(session, reason, at); }); }
+  async revokeUserSessions(userId: string, reason: SessionRevocation = 'logout-all', at = new Date().toISOString()) { await this.write(data => { for (const session of Object.values(data.sessions)) if (session.userId === userId) revoke(session, reason, at); }); }
+  /** Rotation is one write so a crash can never leave both the predecessor and its successor usable. */
+  async rotateSession(previousIdHash: string, next: ApplicationSession, at = new Date().toISOString()) {
+    await this.write(data => { const previous = data.sessions[previousIdHash]; if (previous) previous.supersededAt = at; data.sessions[next.idHash] = next; });
+  }
+  /** Extends the sliding idle deadline; callers throttle this so a busy client does not write on every request. */
+  async touchSession(idHash: string, expiresAt: string, seenAt: string) {
+    await this.write(data => { const session = data.sessions[idHash]; if (!session || session.revokedAt) return; session.expiresAt = expiresAt; session.lastSeenAt = seenAt; });
+  }
+  async addSessionCsrfHash(idHash: string, csrfHash: string, keep = 5) {
+    await this.write(data => { const session = data.sessions[idHash]; if (!session || session.revokedAt) return; session.csrfHashes = [csrfHash, ...session.csrfHashes.filter(value => value !== csrfHash)].slice(0, keep); });
+  }
+  /** Sessions are dropped once they can no longer authenticate anything, keeping the store from growing without bound. */
+  async pruneSessions(now = Date.now(), retentionMs = 7 * 24 * 60 * 60_000) {
+    let removed = 0;
+    await this.write(data => {
+      for (const [idHash, session] of Object.entries(data.sessions)) {
+        const revokedAt = session.revokedAt ? Date.parse(session.revokedAt) : undefined;
+        const dead = Math.max(Date.parse(session.absoluteExpiresAt) || 0, Date.parse(session.expiresAt) || 0, revokedAt ?? 0);
+        if (now - dead > retentionMs) { delete data.sessions[idHash]; removed++; }
+      }
+    });
+    return removed;
+  }
   async rosters(leagueId: string) { return Object.values((await this.read()).rosters).filter(value => value.leagueId === leagueId); }
   async waiverContext(leagueId: string) {
     const data = await this.read();
