@@ -12,6 +12,8 @@ The endpoint synchronizes the selected league using the existing cache intervals
 
 Set `WAIVER_SIGNALS_PATH` in the **API process environment** to a JSON file populated by a trusted forecast job, or inject a `WaiverSignalProvider` as the fourth `createApp` argument. The server does not automatically load `.env` files. The file is read for each analysis, so an external job can replace it atomically without restarting the server. Use actual Sleeper player IDs. Supply forecasts for rostered players as well as acquisition candidates: otherwise their drop and starter comparisons cannot be evaluated.
 
+To populate that feed automatically from a licensed source instead of maintaining it by hand, enable the provider adapter described in [projection-provider.md](projection-provider.md). It writes exactly the schema below, validated identically, and injects itself as the same `WaiverSignalProvider`; everything on this page applies unchanged to what it produces.
+
 The validated schema is `WaiverSignals` in `apps/api/src/waiver-signals.ts`. This abbreviated example shows one player; expand `weeks` to include **every remaining week through the configured league championship** for season value and safe drop selection:
 
 ```json

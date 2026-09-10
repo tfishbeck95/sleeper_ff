@@ -122,6 +122,19 @@ league's rules score higher — and the coverage note is recorded after a waiver
 candidate's risk grade, so an incomplete feed does not demote the return specialists
 it concerns either. See [`docs/special-teams.md`](special-teams.md).
 
+Forecasts reach that boundary either from a hand-maintained file or from the optional provider
+adapter in `apps/api/src/providers`. The adapter is upstream of the boundary and subject to it: it
+produces raw statistics under Sleeper player ids and never fantasy points. It resolves provider
+identities strongest-signal-first and refuses an ambiguous or position-mismatched match rather than
+guessing, derives the two fields Sleeper's contracts require and no source publishes while marking
+them derived, measures category coverage against the live league's own rules, validates every
+candidate with the same `parseWaiverSignals` the file adapter uses, and writes atomically so a
+rejected run retains the last good feed and marks it stale rather than replacing it. Coverage,
+freshness, identity matching and schema validation have stated service levels that alert on breach.
+A commercial source's raw records are licensed for use but not redistribution, so they never reach a
+response body. In a scaled deployment its schedule is interval work and belongs on one worker or
+behind a distributed lock. See [`docs/projection-provider.md`](projection-provider.md).
+
 Fictional demo view models are isolated from this pipeline by naming: they carry
 `illustrativePoints`, never a projection-shaped field, and are never mixed into a
 connected league's rankings.

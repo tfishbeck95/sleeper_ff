@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { demoEnabled, validateAuthenticationConfig } from './auth.js';
 import { createApp } from './app.js';
 import { demoSnapshot } from './demo.js';
+import { configureProjectionFeed } from './providers/index.js';
 import { JsonStore } from './store.js';
 
 validateAuthenticationConfig();
@@ -14,7 +15,11 @@ if (process.env.APP_LOGIN_PASSWORD_HASH && !await store.applicationUserByLogin(p
 }
 async function synchronize() { if (demoEnabled()) { await store.save(demoSnapshot()); console.info('[sync] demo league refreshed'); } }
 await synchronize(); setInterval(() => void synchronize(), interval).unref();
+// The projection feed is opt-in: without PROJECTION_FEED_ENABLED nothing here starts, and the
+// file-based WAIVER_SIGNALS_PATH adapter continues to serve forecasts exactly as before.
+const projectionFeed = configureProjectionFeed(store);
+projectionFeed?.schedule.start();
 // Sessions that can no longer authenticate anything are swept on the sync cadence as well as at login,
 // so an installation that is running but not being signed into does not accumulate them.
 setInterval(() => void store.pruneSessions().catch(error => console.error('[sessions] prune failed', error)), Math.max(interval, 60 * 60_000)).unref();
-createApp(store).listen(port, () => console.info(`API listening on http://localhost:${port}`));
+createApp(store, undefined, undefined, projectionFeed?.store).listen(port, () => console.info(`API listening on http://localhost:${port}`));

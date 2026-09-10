@@ -78,6 +78,10 @@ export class JsonStore {
     return removed;
   }
   async rosters(leagueId: string) { return Object.values((await this.read()).rosters).filter(value => value.leagueId === leagueId); }
+  /** The whole synchronized player directory; projection ingestion resolves identities against it. */
+  async allPlayers() { return Object.values((await this.read()).players); }
+  /** Every connected league, so a process-wide job can ask which of them have live scoring. */
+  async allLeagues() { return Object.values((await this.read()).leagues); }
   async waiverContext(leagueId: string) {
     const data = await this.read();
     return { league: data.leagues[leagueId], rosters: Object.values(data.rosters).filter(r => r.leagueId === leagueId), players: Object.values(data.players) };
