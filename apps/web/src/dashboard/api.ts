@@ -2,10 +2,14 @@ import type { LeagueDetails, PlayerAvailability } from './types';
 
 const env = (import.meta as ImportMeta & { env?: Record<string, string> }).env ?? {};
 const base = env.VITE_API_URL ?? '';
+let csrfToken = '';
+export function setCsrfToken(value: string) { csrfToken = value; }
+export function clearCsrfToken() { csrfToken = ''; }
 export async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
   const timeout = AbortSignal.timeout(20_000);
   const response = await fetch(`${base}${path}`, {
-    headers: { Accept: 'application/json', Authorization: `Bearer ${env.VITE_API_TOKEN ?? 'demo-token'}` },
+    headers: { Accept: 'application/json' },
+    credentials: 'include',
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   });
   if (!response.ok) {
@@ -13,6 +17,12 @@ export async function request<T>(path: string, signal?: AbortSignal): Promise<T>
     throw new Error(body?.error ?? `The request failed (${response.status}). Please try again.`);
   }
   return response.json() as Promise<T>;
+}
+export async function post<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${base}${path}`, { method: 'POST', credentials: 'include', headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify(body) });
+  const value = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(value?.error ?? `The request failed (${response.status}).`);
+  return value as T;
 }
 let playerCache: { at: number; players: Record<string, PlayerAvailability> } | undefined;
 async function players(signal: AbortSignal) {

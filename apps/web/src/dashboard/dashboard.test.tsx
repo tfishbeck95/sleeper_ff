@@ -85,7 +85,7 @@ test('sample decisions include consistent advantages and a checklist for every p
 });
 
 test('dashboard renders the requested section order with accessible status and navigation', () => {
-  const html = renderToStaticMarkup(<Dashboard connection={null} onConnect={noop} onDemo={noop}/>);
+  const html = renderToStaticMarkup(<Dashboard connection={null} onConnect={noop} onDemo={noop} onLogout={noop}/>);
   const offsets = ['alerts', 'lineup', 'matchup', 'waivers', 'trades', 'league'].map(id => html.indexOf(`id="${id}"`));
   assert.ok(offsets.every((offset, i) => offset >= 0 && (!i || offset > offsets[i - 1])));
   assert.match(html, /Players are fictional/);
@@ -95,7 +95,7 @@ test('dashboard renders the requested section order with accessible status and n
 
 test('a connected dashboard first renders loading, without leaking demo recommendations', () => {
   const input = fixture();
-  const html = renderToStaticMarkup(<Dashboard connection={{ user: input.users[0], leagues: [{ league: input.league, roster: input.rosters[0], coOwned: false }] }} onConnect={noop} onDemo={noop}/>);
+  const html = renderToStaticMarkup(<Dashboard connection={{ user: input.users[0], leagues: [{ league: input.league, roster: input.rosters[0], coOwned: false }] }} onConnect={noop} onDemo={noop} onLogout={noop}/>);
   assert.match(html, /Loading your league/);
   assert.doesNotMatch(html, /Marcus Reed|126\.8|Chris Hayes/);
 });
@@ -124,7 +124,7 @@ test('API preserves league data when player sync fails and surfaces authenticate
     globalThis.fetch = async (input, options) => {
       calls.push(String(input));
       if (String(input).includes('/players/nfl')) throw new Error('Offline');
-      assert.equal((options?.headers as Record<string, string>).Authorization, 'Bearer demo-token');
+      assert.equal(options?.credentials, 'include');
       return new Response(JSON.stringify(fixture()), { status: 200 });
     };
     const result = await loadLeague('1234', 8, new AbortController().signal);

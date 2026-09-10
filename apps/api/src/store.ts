@@ -2,15 +2,19 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { League, LeagueSnapshot, Matchup, NflPlayer, Roster, TradedDraftPick, Transaction, User, WeeklySnapshot } from '@sleeper/domain';
 
+export interface ApplicationUser { id: string; login: string; passwordHash: string; sleeperUserId?: string; sleeperUsername?: string; sleeperLeagueIds: string[]; createdAt: string; }
+export interface ApplicationSession { idHash: string; userId: string; csrfHash: string; csrfToken: string; createdAt: string; expiresAt: string; lastRotatedAt: string; revokedAt?: string; }
+
 export interface StoreShape {
   snapshots: Record<string, LeagueSnapshot>;
   leagues: Record<string, League>; users: Record<string, User>; players: Record<string, NflPlayer>;
   rosters: Record<string, Roster>; matchups: Record<string, Matchup>; transactions: Record<string, Transaction>;
   draftPicks: Record<string, TradedDraftPick>; weeklySnapshots: WeeklySnapshot[];
   freshness: Record<string, string>;
+  applicationUsers: Record<string, ApplicationUser>; sessions: Record<string, ApplicationSession>;
   syncLog: { leagueId: string; syncedAt: string; status: 'success' | 'failed'; category?: string; durationMs?: number }[];
 }
-const empty = (): StoreShape => ({ snapshots: {}, leagues: {}, users: {}, players: {}, rosters: {}, matchups: {}, transactions: {}, draftPicks: {}, weeklySnapshots: [], freshness: {}, syncLog: [] });
+const empty = (): StoreShape => ({ snapshots: {}, leagues: {}, users: {}, players: {}, rosters: {}, matchups: {}, transactions: {}, draftPicks: {}, weeklySnapshots: [], freshness: {}, applicationUsers: {}, sessions: {}, syncLog: [] });
 export interface SyncWrite { league?: League; users?: User[]; players?: NflPlayer[]; rosters?: Roster[]; matchups?: Matchup[]; transactions?: Transaction[]; draftPicks?: TradedDraftPick[]; replaceDraftPicksForLeague?: string; weeklySnapshot?: WeeklySnapshot; freshness?: Record<string, string>; }
 
 export class JsonStore {
@@ -28,6 +32,13 @@ export class JsonStore {
   async save(snapshot: LeagueSnapshot) { await this.write(data => { data.snapshots[snapshot.leagueId] = snapshot; data.syncLog.unshift({ leagueId: snapshot.leagueId, syncedAt: snapshot.lastSyncedAt, status: 'success' }); data.syncLog = data.syncLog.slice(0, 100); }); }
   async resourceSyncedAt(key: string) { return (await this.read()).freshness[key]; }
   async league(id: string) { return (await this.read()).leagues[id]; }
+  async applicationUserByLogin(login: string) { return Object.values((await this.read()).applicationUsers).find(user => user.login === login); }
+  async applicationUser(id: string) { return (await this.read()).applicationUsers[id]; }
+  async saveApplicationUser(user: ApplicationUser) { await this.write(data => { data.applicationUsers[user.id] = user; }); }
+  async session(idHash: string) { return (await this.read()).sessions[idHash]; }
+  async saveSession(session: ApplicationSession) { await this.write(data => { data.sessions[session.idHash] = session; }); }
+  async revokeSession(idHash: string, at = new Date().toISOString()) { await this.write(data => { if (data.sessions[idHash]) data.sessions[idHash].revokedAt = at; }); }
+  async revokeUserSessions(userId: string, at = new Date().toISOString()) { await this.write(data => { for (const session of Object.values(data.sessions)) if (session.userId === userId) session.revokedAt = at; }); }
   async rosters(leagueId: string) { return Object.values((await this.read()).rosters).filter(value => value.leagueId === leagueId); }
   async waiverContext(leagueId: string) {
     const data = await this.read();

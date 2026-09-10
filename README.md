@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. The API runs at `http://localhost:4000` and uses the development bearer token `demo-token`.
+Open `http://localhost:5173`. Configure an application login first; session cookies require HTTPS. Demo authentication is a separate, explicit development-only opt-in. See [`docs/identity-and-sessions.md`](docs/identity-and-sessions.md).
 
 ## Commands
 

@@ -38,13 +38,13 @@ test('dashboard metadata and recommendation APIs share persisted scoring and fai
     rosters: async () => [], leagueUsers: async () => [], matchups: async () => [], transactions: async () => [], drafts: async () => [], tradedPicks: async () => [], players: async () => ({}),
   };
   const app = createApp(store, sleeper as never, undefined, { load: async () => input.signals });
-  const get = (path: string) => request(app).get(path).set('Authorization', 'Bearer demo-token');
+  process.env.ENABLE_DEMO_AUTH='true'; process.env.DEMO_SLEEPER_LEAGUE_IDS='demo,1234'; const login=await request(app).post('/auth/demo'); const get = (path: string) => request(app).get(path).set('Cookie',login.headers['set-cookie'][0].split(';')[0]);
   const details = await get('/api/sleeper/leagues/1234?week=8');
   assert.equal(details.status, 200); assert.deepEqual(details.body.scoring.settings, raw);
   assert.deepEqual((await store.league('1234'))!.scoring!.rawSettings, raw);
   fail = true;
   for (const path of ['waivers', 'trades', 'lineup']) {
-    const response = await get(`/api/${path}/1234?week=8&userId=sample`);
+    const response = await get(`/api/${path}/1234?week=8`);
     assert.equal(response.status, 200); assert.equal(response.body.status, 'unavailable');
     assert.equal(response.body.scoring.kind, 'unavailable');
     assert.deepEqual(response.body[path === 'waivers' ? 'recommendations' : path === 'trades' ? 'candidates' : 'startSit'], []);
