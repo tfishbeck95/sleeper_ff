@@ -30,10 +30,15 @@ export interface DashboardData {
   activity: Array<{ id: string; type: string; title: string; detail: string; time: string }>;
   playoffChance?: number; playoffSpots?: number; playoffNote: string;
 }
-export interface PlayerAvailability extends SleeperPlayer { injury_status?: string | null; bye_week?: number }
+export interface PlayerAvailability extends SleeperPlayer { injury_status?: string | null; bye_week?: number; metadataStatus?: 'known' | 'unknown' | 'retired' }
 export interface LeagueDetails {
   scoring?: ScoringConfiguration;
   league: SleeperLeague; rosters: SleeperRoster[]; users: SleeperLeagueUser[];
   matchups: SleeperMatchup[]; transactions: SleeperTransaction[]; lastSyncedAt: string;
   players?: Record<string, PlayerAvailability>; playerError?: string;
+  playerMetadata?: {
+    synchronizedAt: string | null; stale: boolean; lastAttemptedAt: string | null;
+    nextAttemptAt: string | null; lastError: string | null;
+    unknownPlayerIds: string[]; retiredPlayerIds: string[];
+  };
 }

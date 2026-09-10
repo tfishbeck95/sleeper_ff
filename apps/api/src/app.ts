@@ -1,6 +1,7 @@
 import { scoringUnavailable } from '@sleeper/domain';
 import express from 'express'; import cors from 'cors'; import { SleeperApiError, SleeperClient } from '@sleeper/sleeper-client'; import { demoSnapshot } from './demo.js'; import type { JsonStore } from './store.js';
 import { LeagueSyncService } from './sync.js';
+import { PlayerDirectoryService, leaguePlayerIds, validPlayerId } from './players.js';
 import { LeagueSyncWorker, type QueuedSyncJob } from './scheduler/index.js';
 import { FileWaiverSignalProvider, type WaiverSignalProvider } from './waiver-signals.js';
 import { recommendWaivers } from './waivers.js';
@@ -44,6 +45,7 @@ const dashboards=rateLimit({bucket:'dashboard',max:120,windowMs:60_000,key:bySes
 const authenticatedTraffic=rateLimit({bucket:'api',max:600,windowMs:60_000,key:bySession});
 const accountTraffic=rateLimit({bucket:'account',max:120,windowMs:60_000,key:bySession});
 export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync = new LeagueSyncService(store, sleeper), signals: WaiverSignalProvider = new FileWaiverSignalProvider(), worker = new LeagueSyncWorker(store, sync)) { const app=express(); app.disable('x-powered-by'); app.set('trust proxy',trustProxySetting()); app.use(cors({origin:process.env.WEB_ORIGIN ?? 'http://localhost:5173', credentials:true})); app.use(express.json({limit:'32kb'}));
+ const players = new PlayerDirectoryService(store, sleeper);
  const policy=sessionPolicy();
  app.get('/health',(_req,res)=>res.json({status:'ok'}));
  app.post('/auth/login', signIn, signInToAccount, async(req,res)=>{const login=typeof req.body?.login==='string'?req.body.login.trim().toLowerCase():'';const password=typeof req.body?.password==='string'?req.body.password:'';const user=await store.applicationUserByLogin(login);if(!await verifyLogin(user,password))return res.status(401).json({error:'Invalid login or password.'});const issued=await issueSession(store,user!,policy);res.append('Set-Cookie',sessionCookie(issued.rawSessionId,issued.maxAge)).json({user:publicUser(user!),csrfToken:issued.csrfToken,expiresAt:issued.session.expiresAt});});
@@ -173,6 +175,28 @@ export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync 
  }catch(error){next(error);}});
  app.get('/api/sleeper/users/:username',lookups,async(req,res,next)=>{try{const user=await sleeper.user(String(req.params.username));if(!user)return res.status(404).json({error:'No Sleeper account was found for that username.'});res.json(user);}catch(error){next(error);}});
  app.get('/api/sleeper/users/:userId/leagues',lookups,async(req,res,next)=>{try{const linked=(res.locals.auth as Authentication).user.sleeperUserId;if(String(req.params.userId)!==linked)return res.status(403).json({error:'Only the linked Sleeper account may be queried.'});const current=new Date().getUTCFullYear();const requested=typeof req.query.seasons==='string'?req.query.seasons.split(','):[current,current-1,current-2].map(String);const seasons=requested.filter(season=>/^\d{4}$/.test(season)).slice(0,6);if(!seasons.length)return res.status(400).json({error:'Provide at least one valid season.'});const results=await Promise.all(seasons.map(async season=>({season,leagues:await sleeper.leagues(String(req.params.userId),season)})));res.json({seasons:results,lastSyncedAt:new Date().toISOString()});}catch(error){next(error);}});
- app.get('/api/sleeper/leagues/:leagueId',leagueDetail,async(req,res,next)=>{try{const leagueId=String(req.params.leagueId);const week=Math.max(1,Number(req.query.week)||1);const round=Math.max(1,Number(req.query.round)||week);const [league,rosters,users,matchups,transactions,drafts,tradedPicks]=await Promise.all([sync.synchronizeLeagueMetadata(leagueId),sleeper.rosters(leagueId),sleeper.leagueUsers(leagueId),sleeper.matchups(leagueId,week),sleeper.transactions(leagueId,round),sleeper.drafts(leagueId),sleeper.tradedPicks(leagueId)]);res.json({league,scoring:(await store.league(leagueId))?.scoring,rosters,users,matchups,transactions,drafts,tradedPicks,lastSyncedAt:new Date().toISOString()});}catch(error){next(error);}});
+ // Authenticated responses may be stored only in a private browser cache and must revalidate.
+ // Express generates content ETags and honors If-None-Match after authentication/authorization.
+ app.get('/api/players/:leagueId',dashboards,async(req,res,next)=>{try{
+   const ids = req.query.ids, query = req.query.q;
+   const limit = req.query.limit === undefined ? 25 : Number(req.query.limit);
+   if (ids !== undefined && query !== undefined) return res.status(400).json({error:'Choose IDs or a name search.'});
+   if (ids !== undefined && (typeof ids !== 'string' || ids.split(',').length > 100 || !ids.split(',').every(validPlayerId))) return res.status(400).json({error:'Provide 1 to 100 valid player IDs.'});
+   if (query !== undefined && (typeof query !== 'string' || query.trim().length < 2 || query.length > 100 || !Number.isInteger(limit) || limit < 1 || limit > 50)) return res.status(400).json({error:'Provide a search of 2 to 100 characters and a limit from 1 to 50.'});
+   const selection = typeof ids === 'string' ? {ids:ids.split(',')} : typeof query === 'string' ? {query:query.trim(),limit}
+     : {ids:(await store.rosters(String(req.params.leagueId))).flatMap(r=>[...r.playerIds,...r.starterIds,...r.reserveIds,...r.taxiIds])};
+   await players.prepareRead();
+   res.set('Cache-Control','private, no-cache').vary('Cookie').json(await players.subset(selection));
+ }catch(error){next(error);}});
+ app.get('/api/sleeper/leagues/:leagueId',leagueDetail,async(req,res,next)=>{try{
+   const leagueId=String(req.params.leagueId);
+   const week=Math.max(1,Number(req.query.week)||1), round=Math.max(1,Number(req.query.round)||week);
+   const [league,rosters,users,matchups,transactions,drafts,tradedPicks]=await Promise.all([
+     sync.synchronizeLeagueMetadata(leagueId),sleeper.rosters(leagueId),sleeper.leagueUsers(leagueId),
+     sleeper.matchups(leagueId,week),sleeper.transactions(leagueId,round),sleeper.drafts(leagueId),sleeper.tradedPicks(leagueId),players.prepareRead(),
+   ]);
+   const availability = await players.subset({ids:leaguePlayerIds(rosters,matchups,transactions)});
+   res.set('Cache-Control','private, no-cache').vary('Cookie').json({league,scoring:(await store.league(leagueId))?.scoring,rosters,users,matchups,transactions,drafts,tradedPicks,...availability,lastSyncedAt:new Date().toISOString()});
+ }catch(error){next(error);}});
  app.use((error:unknown,_req:express.Request,res:express.Response,_next:express.NextFunction)=>{const status=error instanceof SleeperApiError&&error.status===404?404:502;res.status(status).json({error:status===404?'Sleeper resource not found.':'Sleeper is unavailable right now. Please try again.',category:error instanceof SleeperApiError?error.category:'internal'});});
  return app; }

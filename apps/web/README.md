@@ -9,7 +9,7 @@ Each proposed action opens a native modal with an individual checklist. Escape c
 ## Data coverage
 
 - League rosters, ownership/co-ownership, scores, records, and transactions come from the existing API.
-- Player names and current availability use Sleeper’s documented public player feed, cached in memory for up to 24 hours. A failed player request leaves the league usable and raises a partial-sync alert. This feed is current availability, not a historical injury report.
+- Player names and availability arrive with the Huddle league API response; the browser never downloads Sleeper’s global player feed. The backend validates and persists the shared directory at most once every 24 hours, retaining older data during failures. Responses include the player metadata timestamp, stale/error state, and unknown/retired IDs. This feed is current availability, not a historical injury report.
 - Empty slots use the selected matchup’s starters when available.
 - Live projections, waiver values, trade analysis, confidence scores, and playoff probabilities require an owner-scoped analysis source. They show explanatory empty states rather than sample values in a connected league. The legacy dashboard snapshot is not owner-scoped and is intentionally not used for personalized decisions.
 - A live bye-week schedule is not supplied by the existing API. Coverage is explicitly labeled incomplete. The adapter can use `bye_week` when an authoritative source supplies it.

@@ -1,4 +1,4 @@
-import type { LeagueDetails, PlayerAvailability } from './types';
+import type { LeagueDetails } from './types';
 
 const env = (import.meta as ImportMeta & { env?: Record<string, string> }).env ?? {};
 const base = env.VITE_API_URL ?? '';
@@ -62,24 +62,7 @@ export async function resumeSession(): Promise<AccountUser | null> {
 export async function signOut(everywhere = false) {
   try { await post(everywhere ? '/auth/logout-all' : '/auth/logout', {}); } finally { csrfToken = ''; }
 }
-let playerCache: { at: number; players: Record<string, PlayerAvailability> } | undefined;
-async function players(signal: AbortSignal) {
-  if (playerCache && Date.now() - playerCache.at < 24 * 60 * 60_000) return playerCache.players;
-  const response = await fetch('https://api.sleeper.app/v1/players/nfl', { signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) });
-  if (!response.ok) throw new Error('Player availability could not be refreshed.');
-  const value = await response.json();
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Player availability is unavailable.');
-  playerCache = { at: Date.now(), players: value };
-  return playerCache.players;
-}
 export async function loadLeague(leagueId: string, week: number, signal: AbortSignal) {
-  const [detailResult, playerResult] = await Promise.allSettled([
-    request<LeagueDetails>(`/api/sleeper/leagues/${encodeURIComponent(leagueId)}?week=${week}`, signal),
-    players(signal),
-  ]);
-  if (detailResult.status === 'rejected') throw detailResult.reason;
-  return {
-    details: { ...detailResult.value, ...(playerResult.status === 'fulfilled' ? { players: playerResult.value } : { playerError: 'Player availability could not be loaded. Injury and inactive checks are incomplete.' }) },
-    snapshot: null,
-  };
+  const details = await request<LeagueDetails>(`/api/sleeper/leagues/${encodeURIComponent(leagueId)}?week=${week}`, signal);
+  return { details, snapshot: null };
 }

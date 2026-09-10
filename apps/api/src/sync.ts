@@ -1,9 +1,10 @@
 import { liveScoring, scoringUnavailable, type ScoringConfiguration } from '@sleeper/domain';
-import type { League, Matchup, NflPlayer, Roster, TradedDraftPick, Transaction, User, WeeklySnapshot } from '@sleeper/domain';
-import { SleeperApiError, SleeperClient, type SleeperDraftPick, type SleeperLeague, type SleeperMatchup, type SleeperPlayer, type SleeperRoster, type SleeperTransaction } from '@sleeper/sleeper-client';
+import type { League, Matchup, Roster, TradedDraftPick, Transaction, User, WeeklySnapshot } from '@sleeper/domain';
+import { SleeperApiError, SleeperClient, type SleeperDraftPick, type SleeperLeague, type SleeperMatchup, type SleeperRoster, type SleeperTransaction } from '@sleeper/sleeper-client';
 import { JsonStore, type SyncWrite } from './store.js';
+import { PlayerDirectoryService, PLAYER_REFRESH_MS } from './players.js';
 
-export const REFRESH_AFTER_MS = { users: 6 * 60 * 60_000, rosters: 5 * 60_000, matchups: 2 * 60_000, transactions: 2 * 60_000, draftPicks: 5 * 60_000, players: 24 * 60 * 60_000 } as const;
+export const REFRESH_AFTER_MS = { users: 6 * 60 * 60_000, rosters: 5 * 60_000, matchups: 2 * 60_000, transactions: 2 * 60_000, draftPicks: 5 * 60_000, players: PLAYER_REFRESH_MS } as const;
 export interface SyncResult { leagueId: string; synchronizedAt: string; refreshed: string[]; snapshotId?: string; scoring: ScoringConfiguration; }
 export interface SyncLogger { info(fields: Record<string, unknown>, message: string): void; error(fields: Record<string, unknown>, message: string): void; }
 const defaultLogger: SyncLogger = { info: (fields, message) => console.info(message, fields), error: (fields, message) => console.error(message, fields) };
@@ -51,14 +52,14 @@ export class LeagueSyncService {
         obtain('matchups', `matchups:${leagueId}:${season}:${week}`, () => this.client.matchups(leagueId, week)),
         obtain('transactions', `transactions:${leagueId}:${season}:${week}`, () => this.client.transactions(leagueId, week)),
         obtain('draftPicks', `draftPicks:${leagueId}`, () => this.client.tradedPicks(leagueId)),
-        obtain('players', 'players:nfl', () => this.client.players())
+        new PlayerDirectoryService(this.store, this.client, this.now).refresh()
       ]);
       if (users) write.users = users.map(value => ({ id: value.user_id, username: value.username, displayName: value.display_name, avatarId: value.avatar, ...source(synchronizedAt) } satisfies User));
       if (rosters) write.rosters = rosters.map(value => this.roster(leagueId, value, synchronizedAt));
       if (matchups) write.matchups = matchups.map(value => this.matchup(leagueId, season, week, value, synchronizedAt));
       if (transactions) write.transactions = transactions.map(value => this.transaction(leagueId, week, value, synchronizedAt));
       if (picks) { write.draftPicks = picks.map(value => this.pick(leagueId, value, synchronizedAt)); write.replaceDraftPicksForLeague = leagueId; }
-      if (players) write.players = Object.entries(players).map(([id, value]) => this.player(id, value, synchronizedAt));
+      if (players) refreshed.push('players');
       if (write.rosters || write.matchups) {
         const snapshotRosters = write.rosters ?? await this.store.rosters(leagueId); const snapshotMatchups = write.matchups ?? [];
         const id = `${leagueId}:${season}:${week}:${synchronizedAt}`;
@@ -77,5 +78,4 @@ export class LeagueSyncService {
   private matchup(leagueId: string, season: string, week: number, v: SleeperMatchup, at: string): Matchup { return { id: `${leagueId}:${season}:${week}:${v.roster_id}`, leagueId, season, week, matchupId: v.matchup_id, rosterId: v.roster_id, points: v.points, customPoints: v.custom_points ?? null, playerIds: v.players, starterIds: v.starters, playerPoints: v.players_points ?? {}, ...source(at) }; }
   private transaction(leagueId: string, week: number, v: SleeperTransaction, at: string): Transaction { return { id: v.transaction_id, leagueId, week, type: v.type, status: v.status, rosterIds: v.roster_ids, adds: v.adds ?? {}, drops: v.drops ?? {}, draftPicks: v.draft_picks.map(p => ({ season: p.season, round: p.round, rosterId: p.roster_id, previousOwnerId: p.previous_owner_id ?? null, ownerId: p.owner_id })), waiverBudget: v.waiver_budget ?? [], ...source(at, v.status_updated ?? v.created) }; }
   private pick(leagueId: string, v: SleeperDraftPick, at: string): TradedDraftPick { return { id: `${leagueId}:${v.season}:${v.round}:${v.roster_id}`, leagueId, season: v.season, round: v.round, rosterId: v.roster_id, previousOwnerId: v.previous_owner_id ?? null, ownerId: v.owner_id, ...source(at) }; }
-  private player(id: string, v: SleeperPlayer, at: string): NflPlayer { return { id, firstName: v.first_name ?? null, lastName: v.last_name ?? null, fullName: v.full_name ?? ([v.first_name, v.last_name].filter(Boolean).join(' ') || id), team: v.team ?? null, position: v.position ?? null, fantasyPositions: v.fantasy_positions ?? [], status: v.status ?? null, injuryStatus: v.injury_status ?? null, ...source(at) }; }
 }

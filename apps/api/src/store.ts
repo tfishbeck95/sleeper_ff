@@ -81,6 +81,11 @@ export interface StoreShape {
   applicationUsers: Record<string, ApplicationUser>; sessions: Record<string, ApplicationSession>;
   syncLog: { leagueId: string; syncedAt: string; status: 'success' | 'failed'; category?: string; durationMs?: number }[];
   leagueConnections: Record<string, LeagueConnection>; leases: Record<string, SyncLease>;
+  playerMetadata?: PlayerMetadataState;
+}
+export interface PlayerMetadataState {
+  synchronizedAt: string | null; lastAttemptedAt: string; nextAttemptAt: string;
+  lastError: string | null;
 }
 function revoke(session: ApplicationSession | undefined, reason: SessionRevocation, at: string) { if (!session || session.revokedAt) return; session.revokedAt = at; session.revokedReason = reason; }
 const empty = (): StoreShape => ({ snapshots: {}, leagues: {}, users: {}, players: {}, rosters: {}, matchups: {}, transactions: {}, draftPicks: {}, weeklySnapshots: [], freshness: {}, applicationUsers: {}, sessions: {}, syncLog: [], leagueConnections: {}, leases: {} });
@@ -136,6 +141,26 @@ export class JsonStore {
   async rosters(leagueId: string) { return Object.values((await this.read()).rosters).filter(value => value.leagueId === leagueId); }
   /** The whole synchronized player directory; projection ingestion resolves identities against it. */
   async allPlayers() { return Object.values((await this.read()).players); }
+  async playerDirectory() {
+    const data = await this.read();
+    // Upgrade an existing store without discarding its last successful observation. The old
+    // directory is due immediately so it passes the new ingestion validation on first refresh.
+    const legacyAt = data.freshness['players:nfl'];
+    const metadata = data.playerMetadata ?? (legacyAt ? {
+      synchronizedAt: legacyAt, lastAttemptedAt: legacyAt, nextAttemptAt: legacyAt, lastError: null,
+    } : undefined);
+    return { players: data.players, metadata };
+  }
+  /** Publish the validated directory and its freshness together; failures only update attempt state. */
+  async savePlayerDirectory(metadata: PlayerMetadataState, players?: NflPlayer[]) {
+    await this.write(data => {
+      if (players) {
+        data.players = Object.fromEntries(players.map(player => [player.id, player]));
+        data.freshness['players:nfl'] = metadata.synchronizedAt!;
+      }
+      data.playerMetadata = metadata;
+    });
+  }
   /** Every connected league, so a process-wide job can ask which of them have live scoring. */
   async allLeagues() { return Object.values((await this.read()).leagues); }
 

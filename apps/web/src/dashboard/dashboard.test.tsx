@@ -64,6 +64,19 @@ test('selected week starters take precedence over current roster starters', () =
   assert.equal(data.alerts.filter(a => a.kind === 'empty').length, 1);
 });
 
+test('unknown and retired player IDs render safely with metadata freshness and incomplete coverage', () => {
+  const input = fixture();
+  input.players!.a = { player_id: 'a', full_name: 'Player a', metadataStatus: 'unknown' };
+  input.players!.d = { player_id: 'd', full_name: 'Retired Player', status: 'Retired', metadataStatus: 'retired' };
+  input.playerError = 'Some player IDs have no metadata. Their availability checks are incomplete.';
+  input.playerMetadata = { synchronizedAt: '2026-09-08T12:00:00Z', stale: true, lastAttemptedAt: null, nextAttemptAt: null, lastError: null, unknownPlayerIds: ['a'], retiredPlayerIds: ['d'] };
+  const data = fromLeagueDetails(input, 'me', 8, null);
+  assert.ok(data.alerts.some(alert => alert.kind === 'inactive' && /Retired Player/.test(alert.title)));
+  assert.ok(data.alerts.some(alert => alert.kind === 'sync'));
+  assert.match(data.coverageNote!, /2026-09-08T12:00:00Z \(stale\)/);
+  assert.equal(data.standings.length, 2);
+});
+
 test('deep links accept only league IDs and always use a fixed HTTPS origin', () => {
   assert.equal(sleeperLeagueUrl('1234567890123456789'), 'https://sleeper.com/leagues/1234567890123456789');
   for (const value of ['demo', '', '../settings', 'javascript:alert(1)', '123?redirect=evil', 'https://evil.test', '123/456']) assert.equal(sleeperLeagueUrl(value), null);
@@ -123,14 +136,16 @@ test('API preserves league data when player sync fails and surfaces authenticate
   try {
     globalThis.fetch = async (input, options) => {
       calls.push(String(input));
-      if (String(input).includes('/players/nfl')) throw new Error('Offline');
+      assert.equal(String(input), '/api/sleeper/leagues/1234?week=8');
       assert.equal(options?.credentials, 'include');
-      return new Response(JSON.stringify(fixture()), { status: 200 });
+      return new Response(JSON.stringify({ ...fixture(), playerError: 'Availability checks are incomplete.', playerMetadata: { synchronizedAt: '2026-09-08T12:00:00Z', stale: true } }), { status: 200 });
     };
     const result = await loadLeague('1234', 8, new AbortController().signal);
     assert.equal(result.details.league.league_id, '1234');
     assert.match(result.details.playerError!, /incomplete/);
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 1);
+    assert.equal(result.details.players?.a.full_name, 'Starter A');
+    assert.equal(result.details.playerMetadata?.stale, true);
     globalThis.fetch = async () => new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
     await assert.rejects(request('/api/example'), /Unauthorized/);
   } finally { globalThis.fetch = original; }

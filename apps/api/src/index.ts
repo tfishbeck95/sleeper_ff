@@ -8,6 +8,7 @@ import { configureProjectionFeed } from './providers/index.js';
 import { configureLeagueSyncWorker, syncWorkerEnabled } from './scheduler/index.js';
 import { JsonStore } from './store.js';
 import { LeagueSyncService } from './sync.js';
+import { PlayerDirectoryService } from './players.js';
 
 validateAuthenticationConfig();
 const store = new JsonStore(resolve(process.env.DATA_FILE ?? '../../data/store.json'));
@@ -23,6 +24,11 @@ if (demoEnabled()) { await store.save(demoSnapshot()); console.info('[league-syn
 
 const sleeper = new SleeperClient();
 const sync = new LeagueSyncService(store, sleeper);
+// One shared directory refreshes at most daily, even when there are no active leagues.
+const players = new PlayerDirectoryService(store, sleeper);
+const refreshPlayers = () => void players.refresh().catch(error => console.error('[players] storage failure', error));
+const playerSweep = syncWorkerEnabled() ? setInterval(refreshPlayers, 60 * 60_000) : undefined;
+if (playerSweep) { playerSweep.unref(); refreshPlayers(); }
 /**
  * Connected leagues are synchronized by the worker, never by an interval in this file and never inside
  * an HTTP request. One instance owns the schedule: `SYNC_WORKER_ENABLED=false` opts an instance out
@@ -45,6 +51,6 @@ const server = createApp(store, sleeper, sync, projectionFeed?.store, worker).li
 // A stopped worker holds no timer and takes no new leases; the ones it holds expire on their own, so a
 // replacement instance picks the schedule up without waiting for anything to be released by hand.
 for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => {
-  worker.stop(); projectionFeed?.schedule.stop(); clearInterval(sessionSweep);
+  worker.stop(); projectionFeed?.schedule.stop(); clearInterval(sessionSweep); clearInterval(playerSweep);
   server.close(() => process.exit(0));
 });

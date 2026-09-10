@@ -59,7 +59,7 @@ export function fromLeagueDetails(details: LeagueDetails, userId: string, week: 
     const name = playerName(id);
     if (player?.bye_week === week) addAlert(`bye-${index}`, 'bye', `${name} has a bye`, `Your ${slot} starter has no game in Week ${week}. Review a replacement.`);
     const status = (player?.injury_status || player?.status || '').toLowerCase();
-    if (['out', 'inactive', 'ir', 'injured reserve', 'suspended', 'pup'].includes(status)) addAlert(`inactive-${index}`, 'inactive', `${name} is ${status}`, `Current availability flag for your ${slot} starter. Verify the selected week and latest report in Sleeper.`);
+    if (['out', 'inactive', 'ir', 'injured reserve', 'suspended', 'pup', 'retired', 'deceased'].includes(status)) addAlert(`inactive-${index}`, 'inactive', `${name} is ${status}`, `Current availability flag for your ${slot} starter. Verify the selected week and latest report in Sleeper.`);
     else if (status && !['active', 'healthy'].includes(status)) addAlert(`injury-${index}`, 'injury', `${name}: ${status}`, `Your ${slot} starter needs a status check. Have an eligible backup ready.`);
   });
   if (details.playerError) alerts.push(syncAlert(details.playerError));
@@ -74,7 +74,7 @@ export function fromLeagueDetails(details: LeagueDetails, userId: string, week: 
   const spots = league.settings.playoff_teams;
   return {
     scoring, demo: false, week, teamName: teamName(roster.roster_id), format, lastSyncedAt: details.lastSyncedAt,
-    coverageNote: 'Availability reflects the latest player feed, which may be cached for up to 24 hours; it is not a historical injury report. Bye-week schedule and projection coverage are unavailable. Recheck every starter in Sleeper.',
+    coverageNote: `${details.playerMetadata?.synchronizedAt ? `Player metadata updated ${details.playerMetadata.synchronizedAt}${details.playerMetadata.stale ? ' (stale)' : ''}. ` : ''}Huddle refreshes availability at most once every 24 hours and retains older data during upstream failures; it is not a historical injury report. Bye-week schedule and projection coverage are unavailable. Recheck every starter in Sleeper.`,
     alerts: sortAlerts(alerts), starts: [], waivers: [], trades: [], needs: [], standings,
     matchup: opponent ? { opponent: teamName(opponent.roster_id), actualFor: current?.custom_points ?? current?.points, actualAgainst: opponent.custom_points ?? opponent.points, paths: ['Resolve empty or unavailable starter slots to avoid preventable missing points.'], risks: ['Player availability can change before kickoff. Projections are unavailable, so a winning margin and specific matchup risks cannot be estimated.'] } : null,
     activity: [...transactions].sort((a, b) => (b.status_updated ?? b.created ?? 0) - (a.status_updated ?? a.created ?? 0)).map(t => ({ id: t.transaction_id, type: t.type, title: `${t.roster_ids.map(teamName).join(' & ') || 'League'} · ${t.type.replace('_', ' ')}`, detail: `${t.status}. ${Object.keys(t.adds ?? {}).length ? `Added ${Object.keys(t.adds ?? {}).map(playerName).join(', ')}. ` : ''}${Object.keys(t.drops ?? {}).length ? `Dropped ${Object.keys(t.drops ?? {}).map(playerName).join(', ')}. ` : ''}${t.draft_picks?.length ? `${t.draft_picks.length} draft pick(s) included.` : ''}`, time: (t.status_updated ?? t.created) ? new Date((t.status_updated ?? t.created)!).toISOString() : '' })),

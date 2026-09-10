@@ -1,8 +1,8 @@
 # League synchronization
 
-Connected leagues are synchronized by one background worker. Nothing else calls Sleeper on a schedule,
-and no HTTP request fans out to Sleeper on a user's behalf beyond the cached, TTL-bounded read the
-analysis routes already perform.
+Connected leagues are synchronized by one background worker. The shared player directory has its own
+daily refresh interval, described below. League detail reads also fetch Sleeper league resources;
+analysis routes perform a synchronization bounded by per-resource TTLs.
 
 The worker lives in [`apps/api/src/scheduler`](../apps/api/src/scheduler). It replaced an interval that
 only refreshed the sample league, which meant a connected league was only ever synchronized by whoever
@@ -115,6 +115,51 @@ and the next attempt time, and the dashboard keeps serving the last good snapsho
 reported beside it. A metadata refresh that fails additionally marks the league's scoring `unavailable`
 while retaining the last raw observation, so no ranking is produced from rules that could not be
 confirmed.
+
+## Shared NFL player directory
+
+`PlayerDirectoryService` owns the global `/players/nfl` fetch. The worker checks on startup and hourly;
+successful refreshes are spaced at least 24 hours apart. League synchronization and API reads use the
+same service, in-flight job, and `players:nfl` lease. A forced league sync cannot override the player
+interval. Failures wait at least one hour (or longer if upstream `Retry-After` requires it), with the
+next attempt persisted before fetching so restarts also respect the cooldown.
+API reads serve an existing directory while a due refresh runs in the background. On a cold start,
+they wait at most one second for players, then return placeholders while ingestion continues; a slow
+player feed cannot hold league rendering behind its upstream retry budget.
+
+The service validates IDs and consumed field types, rejects empty or malformed feeds, normalizes
+names/positions/status fields, and atomically replaces the shared `players` directory and its freshness
+in `DATA_FILE`. Responses select from this normalized data without revalidating upstream records.
+Failures update attempt/error metadata but never replace the last good players or their successful
+timestamp. Successful replacement removes IDs no longer in the feed; those IDs get safe placeholders
+when requested. Explicitly retired/deceased entries retain their names and availability flags.
+
+The existing JSON storage profile is persistent and shared across all users and leagues in one API
+instance. It is **not a cross-process database**: multiple replicas require a transactional shared
+store and distributed player lease, just as the league worker does. Mount `DATA_FILE` on persistent
+storage when running in a container.
+
+The browser's `loadLeague` makes one authenticated Huddle request:
+
+- `GET /api/sleeper/leagues/:leagueId?week=8` includes `players` for every roster (including starters,
+  IR and taxi), selected-week matchup, and returned transaction add/drop. It never includes unrelated
+  free agents or another league's players.
+- `GET /api/players/:leagueId` returns the stored league roster subset.
+- `GET /api/players/:leagueId?ids=4034,5000` resolves up to 100 explicitly requested IDs, including
+  targets from current recommendations. No IDs means no global dump.
+- `GET /api/players/:leagueId?q=smith&limit=25` searches names/IDs, with a two-character minimum and
+  at most 50 results. IDs and search cannot be combined. All routes require a session linked to the league.
+
+Both responses include `playerMetadata.synchronizedAt` (last successful ingestion, or `null`), `stale`,
+`lastAttemptedAt`, `nextAttemptAt`, `lastError`, `unknownPlayerIds`, and `retiredPlayerIds`. Unknown IDs
+receive `Player <id>` placeholders with `metadataStatus: "unknown"`; the empty starter sentinel `0`
+is excluded. `playerError` explains unavailable, stale, or incomplete coverage without failing league
+rendering. The UI displays metadata freshness separately from league freshness.
+
+Responses use `Cache-Control: private, no-cache`, `Vary: Cookie`, and Express content ETags.
+Clients may retain a private copy but must revalidate it; unchanged player lookup responses return
+`304` for `If-None-Match`. Authentication and league authorization run before conditional responses.
+The global refresh interval is deliberately independent of browser caching.
 
 ## Configuration
 
