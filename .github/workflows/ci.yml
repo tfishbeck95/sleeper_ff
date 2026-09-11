@@ -14,6 +14,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # A vulnerability is published on its own schedule, not on ours. A commit that was clean when it
+  # merged is not clean forever, and nothing re-checks a branch nobody is pushing to — so the scans
+  # below run weekly against `main` as well as on every change.
+  schedule:
+    - cron: '17 6 * * 1'
 
 # Read-only. No job needs to write to the repository, and the token cannot be misused for what it was
 # never granted.
@@ -28,6 +33,9 @@ concurrency:
 
 env:
   NODE_VERSION: '22'
+  # Pinned, and installed by hand rather than through a third-party action, for the same reason
+  # gitleaks is: the thing that inspects the build is part of the build's supply chain too.
+  TRIVY_VERSION: '0.58.0'
 
 jobs:
   # --- Type check, test, build ------------------------------------------------------------------
@@ -168,6 +176,27 @@ jobs:
         continue-on-error: true
         run: npm audit --audit-level=moderate
 
+      - name: Install trivy
+        run: |
+          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            | tar -xz -C /usr/local/bin trivy
+          trivy --version
+
+      # A second opinion on the same lockfile, from a different advisory database. `npm audit` reads
+      # the npm registry's; this reads the GitHub and OSV feeds. An advisory usually reaches one
+      # before the other, and the gap between them is measured in days.
+      #
+      # `--ignore-unfixed` is deliberate: an advisory with no fixed version is a thing to track, not
+      # a thing a pull request can act on, and a build that cannot be made green stops being read.
+      - name: Scan the dependency tree
+        run: |
+          trivy filesystem . \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            --timeout 10m
+
   # --- Images -------------------------------------------------------------------------------------
   images:
     name: Images build, and carry nothing they should not
@@ -241,3 +270,29 @@ jobs:
           cp .env.staging.example .env.staging
           sed -i 's/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=ci/; s|^APP_LOGIN_PASSWORD_HASH=$|APP_LOGIN_PASSWORD_HASH=scrypt:ab12:cd34|' .env.staging
           docker compose --env-file .env.staging -f compose.yaml -f compose.staging.yaml config --quiet
+
+      - name: Install trivy
+        run: |
+          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            | tar -xz -C /usr/local/bin trivy
+          trivy --version
+
+      # The images, not the lockfile. Most of what is in one of these came from a base image — the
+      # Alpine and nginx layers, their OpenSSL, their libc — and none of it appears in any manifest
+      # this repository has. It is also the part that goes stale fastest: a base image published two
+      # months ago is two months of advisories behind, which is what the weekly run above exists to
+      # notice.
+      - name: Images carry no known high or critical vulnerability
+        run: |
+          fail=0
+          for image in huddle-api:ci huddle-migrate:ci huddle-web:ci; do
+            echo "::group::$image"
+            trivy image "$image" \
+              --scanners vuln \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              --timeout 10m || fail=1
+            echo "::endgroup::"
+          done
+          exit $fail

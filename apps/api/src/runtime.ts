@@ -1,15 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
-import { SleeperClient } from '@sleeper/sleeper-client';
+import type { SleeperClient } from '@sleeper/sleeper-client';
 import { createApp } from './app.js';
 import { demoSnapshot } from './demo.js';
-import { describeEnvironment, validateEnvironment, type RuntimeConfiguration } from './config/environment.js';
+import { describeEnvironment, validateEnvironment, type RuntimeConfiguration, type ValidationContext } from './config/environment.js';
 import { PlayerDirectoryService } from './players.js';
 import { configureProjectionFeed, configureProjectionFeedReader, type ProjectionFeedStore } from './providers/index.js';
 import { configureLeagueSyncWorker, type LeagueSyncWorker } from './scheduler/index.js';
 import { closeHttpServer, GracefulShutdown } from './shutdown.js';
 import { createRepository, describeStorage, type HuddleRepository } from './storage/index.js';
 import { LeagueSyncService } from './sync.js';
+import { sleeperClient } from './config/upstream.js';
+import { servesHttps } from './http/security.js';
+import { logger } from './log.js';
 
 /**
  * What both processes are built from.
@@ -44,14 +47,14 @@ export interface Runtime {
  * `EX_CONFIG` — an orchestrator that restarts on failure restarts this forever, and the code says why
  * before anyone reads the logs.
  */
-export function loadConfiguration(env: NodeJS.ProcessEnv = process.env): RuntimeConfiguration {
+export function loadConfiguration(env: NodeJS.ProcessEnv = process.env, context: ValidationContext = {}): RuntimeConfiguration {
   let configuration: RuntimeConfiguration;
-  try { configuration = validateEnvironment(env); }
-  catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(78); }
-  console.info(`[config] ${describeEnvironment(configuration)}`);
-  console.info(`[storage] ${describeStorage(configuration.storage)}`);
-  if (configuration.storage.defaulted) console.info('[storage] STORAGE_ADAPTER is unset; using the local JSON adapter. Production requires it to be named explicitly.');
-  for (const warning of configuration.warnings) console.warn(`[config] ${warning}`);
+  try { configuration = validateEnvironment(env, context); }
+  catch (error) { logger.error({ error }, error instanceof Error ? error.message : String(error)); process.exit(78); }
+  logger.info({ component: 'config', summary: describeEnvironment(configuration) }, 'configuration validated');
+  logger.info({ component: 'storage', summary: describeStorage(configuration.storage) }, 'storage configured');
+  if (configuration.storage.defaulted) logger.info({ component: 'storage' }, 'STORAGE_ADAPTER is unset; using the local JSON adapter. Production requires it to be named explicitly.');
+  for (const warning of configuration.warnings) logger.warn({ component: 'config' }, warning);
   return configuration;
 }
 
@@ -66,8 +69,10 @@ export function loadConfiguration(env: NodeJS.ProcessEnv = process.env): Runtime
 export function createRuntime(configuration: RuntimeConfiguration): Runtime {
   let store: HuddleRepository;
   try { ({ repository: store } = createRepository()); }
-  catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(78); }
-  const sleeper = new SleeperClient();
+  catch (error) { logger.error({ error }, error instanceof Error ? error.message : String(error)); process.exit(78); }
+  // One client, built from the validated budgets rather than from its own defaults, so every call to
+  // Sleeper in this process waits for exactly as long as the deployment said it may.
+  const sleeper: SleeperClient = sleeperClient('interactive');
   const sync = new LeagueSyncService(store, sleeper);
   const players = new PlayerDirectoryService(store, sleeper);
   const worker = configureLeagueSyncWorker(store, sync);
@@ -89,7 +94,7 @@ export async function seed({ store, configuration }: Runtime, env: NodeJS.Proces
   // The sample league is fiction, so it is seeded once here rather than synchronized: there is nothing
   // upstream to synchronize it against. Production never reaches this line, and the worker never
   // schedules the sample league even if a stored connection for it survives into a production store.
-  if (configuration.demoEnabled) { await store.save(demoSnapshot()); console.info('[league-sync] sample league seeded'); }
+  if (configuration.demoEnabled) { await store.save(demoSnapshot()); logger.info({ component: 'league-sync' }, 'sample league seeded'); }
 }
 
 /**
@@ -122,8 +127,16 @@ export interface Component {
  */
 export function startHttp(runtime: Runtime, reader: ProjectionFeedStore | null = configureProjectionFeedReader()): { server: Server; component: Component } {
   const { configuration, store, sleeper, sync, worker } = runtime;
-  const app = createApp(store, sleeper, sync, reader ?? undefined, worker);
-  const server = app.listen(configuration.port, () => console.info(`[api] listening on port ${configuration.port}`));
+  // The application is handed what the environment pass already validated, rather than reading the
+  // environment a second time: one reader of WEB_ORIGIN and TRUST_PROXY, not two that can disagree.
+  const app = createApp(store, sleeper, sync, reader ?? undefined, worker, {
+    webOrigins: configuration.webOrigins,
+    trustProxy: configuration.trustProxy,
+    production: configuration.production,
+    https: servesHttps(),
+    log: logger,
+  });
+  const server = app.listen(configuration.port, () => logger.info({ component: 'api', port: configuration.port }, 'listening'));
   return {
     server,
     component: {
@@ -146,12 +159,12 @@ export function startHttp(runtime: Runtime, reader: ProjectionFeedStore | null =
 export function startScheduledWork(runtime: Runtime): Component | null {
   const { configuration, store, players, worker } = runtime;
   if (!configuration.sync.workerEnabled) {
-    console.info('[league-sync] schedule disabled on this instance; another worker or managed job owns it');
+    logger.info({ component: 'league-sync' }, 'schedule disabled on this instance; another worker or managed job owns it');
     return null;
   }
 
   // One shared directory refreshes at most daily, even when there are no active leagues.
-  const refreshPlayers = () => void players.refresh().catch(error => console.error('[players] storage failure', error));
+  const refreshPlayers = () => void players.refresh().catch(error => logger.error({ component: 'players', error }, 'player directory refresh failed'));
   const playerSweep = setInterval(refreshPlayers, 60 * 60_000);
   playerSweep.unref();
   refreshPlayers();
@@ -171,7 +184,7 @@ export function startScheduledWork(runtime: Runtime): Component | null {
 
   // Sessions that can no longer authenticate anything are swept on the sync cadence as well as at
   // login, so an installation that is running but not being signed into does not accumulate them.
-  const sessionSweep = setInterval(() => void store.pruneSessions().catch(error => console.error('[sessions] prune failed', error)), Math.max(configuration.sync.intervalMs, 60 * 60_000));
+  const sessionSweep = setInterval(() => void store.pruneSessions().catch(error => logger.error({ component: 'sessions', error }, 'session prune failed')), Math.max(configuration.sync.intervalMs, 60 * 60_000));
   sessionSweep.unref();
 
   return {

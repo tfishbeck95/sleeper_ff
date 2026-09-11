@@ -2,6 +2,8 @@ import { isAbsolute } from 'node:path';
 import { insecureCookiesEnabled, sessionPolicy, validateAuthenticationConfig, type SessionPolicy } from '../auth.js';
 import { instanceMode, storageConfiguration, type StorageConfiguration } from '../storage/configure.js';
 import { parseWebOrigins } from './origins.js';
+import { describeTrustProxy, parseTrustProxy, type TrustProxySetting } from './proxy.js';
+import { describeUpstreamBudgets, resolveUpstreamBudgets, type UpstreamBudgets } from './upstream.js';
 
 /**
  * One pass over the process environment, before anything is built from it.
@@ -61,7 +63,9 @@ export interface RuntimeConfiguration {
   port: number;
   /** Exact origins allowed to send credentialed requests. */
   webOrigins: string[];
-  trustProxy: boolean | number | string;
+  trustProxy: TrustProxySetting;
+  /** How long any call to somebody else's server may take, per profile. See `config/upstream.ts`. */
+  upstream: UpstreamBudgets;
   storage: StorageConfiguration;
   session: SessionPolicy;
   sync: SyncConfiguration;
@@ -161,7 +165,15 @@ export function runtimeMode(env: NodeJS.ProcessEnv = process.env): RuntimeMode {
  * Throws `EnvironmentError` naming every problem at once. Callers log it and exit; nothing is
  * constructed from a configuration that did not pass.
  */
-export function validateEnvironment(env: NodeJS.ProcessEnv = process.env): RuntimeConfiguration {
+export interface ValidationContext {
+  /**
+   * Whether this process binds an application port. The worker does not, and settings that only
+   * mean something to a request — the trusted-proxy hop count — are not demanded of it.
+   */
+  servesHttp?: boolean;
+}
+
+export function validateEnvironment(env: NodeJS.ProcessEnv = process.env, { servesHttp = true }: ValidationContext = {}): RuntimeConfiguration {
   const found = new Problems();
   const mode = found.attempt(() => runtimeMode(env)) ?? 'development';
   const production = mode === 'production';
@@ -224,10 +236,11 @@ export function validateEnvironment(env: NodeJS.ProcessEnv = process.env): Runti
   const projectionFeed = validateProjectionFeed(env, found);
 
   // --- Reverse proxies ---
-  const trustProxy = validateTrustProxy(env.TRUST_PROXY, found);
-  if (production && trustProxy === false) {
-    found.warn('TRUST_PROXY is unset. Behind a reverse proxy every request appears to come from the proxy, so the per-address rate limits are charged to one bucket shared by every client. Set it to the number of proxies in front of this process, or leave it unset only when the API is exposed directly.');
-  }
+  // One parser, shared with the application, so what is validated here is what Express is told.
+  const trustProxy = found.attempt(() => parseTrustProxy(env.TRUST_PROXY, { production, servesHttp })) ?? false;
+
+  // --- Upstream timeout and retry budgets ---
+  const upstream = validateUpstreamBudgets(env, found, shutdownGraceMs);
 
   const demoEnabled = found.flag(env, 'ENABLE_DEMO_AUTH', false) && !production;
   found.flag(env, 'INSECURE_DEV_COOKIES', false);
@@ -235,10 +248,34 @@ export function validateEnvironment(env: NodeJS.ProcessEnv = process.env): Runti
 
   if (found.list.length) throw new EnvironmentError(found.list);
   return {
-    mode, production, port, webOrigins: origins, trustProxy, storage, session,
+    mode, production, port, webOrigins: origins, trustProxy, upstream, storage, session,
     sync: { workerEnabled, intervalMs, concurrency, leaseTtlMs },
     projectionFeed, workerHealthPort, shutdownGraceMs, demoEnabled, warnings: found.warnings,
   };
+}
+
+/**
+ * The upstream budgets, and the two relationships that make them coherent.
+ *
+ * A total shorter than one attempt is a budget that can never complete a call, and a total longer
+ * than the shutdown grace period means a drain either abandons a request in flight or waits past the
+ * deadline an orchestrator will kill the process at. Neither fails at startup on its own; both
+ * produce a confusing failure much later, under load, which is the only time they matter.
+ */
+function validateUpstreamBudgets(env: NodeJS.ProcessEnv, found: Problems, shutdownGraceMs: number): UpstreamBudgets {
+  found.number(env, 'UPSTREAM_TIMEOUT_SECONDS', 10, { min: 1, max: 120, unit: SECOND });
+  found.number(env, 'UPSTREAM_MAX_ATTEMPTS', 3, { min: 1, max: 10, integer: true });
+  found.number(env, 'UPSTREAM_REQUEST_BUDGET_SECONDS', 20, { min: 1, max: 300, unit: SECOND });
+  found.number(env, 'UPSTREAM_BACKGROUND_BUDGET_SECONDS', 90, { min: 1, max: 900, unit: SECOND });
+  const budgets = resolveUpstreamBudgets(env);
+  const { interactive } = budgets;
+  if (interactive.maxElapsedMs < interactive.timeoutMs) {
+    found.add(`UPSTREAM_REQUEST_BUDGET_SECONDS (${interactive.maxElapsedMs / SECOND}s) is shorter than UPSTREAM_TIMEOUT_SECONDS (${interactive.timeoutMs / SECOND}s), so no attempt could ever finish inside the budget.`);
+  }
+  if (interactive.maxElapsedMs > shutdownGraceMs) {
+    found.warn(`UPSTREAM_REQUEST_BUDGET_SECONDS (${interactive.maxElapsedMs / SECOND}s) is longer than SHUTDOWN_GRACE_SECONDS (${shutdownGraceMs / SECOND}s), so a request waiting on an upstream call can be cut short by a drain rather than finishing it.`);
+  }
+  return budgets;
 }
 
 /**
@@ -257,27 +294,6 @@ function validateDatabaseUrl(value: string | undefined, found: Problems): void {
   if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') found.add(`DATABASE_URL must use the postgres:// or postgresql:// scheme, not '${url.protocol.replace(':', '')}://'.`);
   if (!url.hostname) found.add('DATABASE_URL names no host.');
   if (!url.pathname.replace(/^\//, '')) found.add('DATABASE_URL names no database. Expected postgres://user:password@host:port/database.');
-}
-
-/**
- * Express turns this into how many hops of `X-Forwarded-For` it believes.
- *
- * Getting it wrong is silent in both directions: too low and every client shares the proxy's rate-limit
- * bucket, too high and a client can spoof its own address by sending the header itself. So the value
- * is checked here rather than handed to Express to interpret however it can.
- */
-function validateTrustProxy(value: string | undefined, found: Problems): boolean | number | string {
-  const raw = value?.trim();
-  if (raw === undefined || raw === '' || raw === 'false') return false;
-  if (raw === 'true') return true;
-  if (/^\d+$/.test(raw)) return Number(raw);
-  const named = ['loopback', 'linklocal', 'uniquelocal'];
-  const entries = raw.split(',').map(entry => entry.trim()).filter(Boolean);
-  // Anything else has to be a list of addresses or subnets Express can compile; a word it does not know
-  // throws inside `app.set`, long after the log line that would have explained it.
-  if (entries.length && entries.every(entry => named.includes(entry) || /^[0-9a-fA-F:.]+(\/\d{1,3})?$/.test(entry))) return raw;
-  found.add(`TRUST_PROXY must be 'true', 'false', the number of proxies in front of this process, or a comma-separated list of addresses, subnets or the names ${named.join('/')} — not '${raw}'.`);
-  return false;
 }
 
 /**
@@ -346,6 +362,8 @@ export function describeEnvironment(configuration: RuntimeConfiguration): string
     `mode=${configuration.mode}`,
     `port=${configuration.port}`,
     `origins=${configuration.webOrigins.join(' ') || 'none'}`,
+    `proxies=${describeTrustProxy(configuration.trustProxy)}`,
+    `upstream=${describeUpstreamBudgets(configuration.upstream)}`,
     `storage=${configuration.storage.adapter}/${configuration.storage.instanceMode}`,
     `worker=${configuration.sync.workerEnabled ? 'enabled' : 'disabled'}`,
     `sync-interval=${configuration.sync.intervalMs / MINUTE}m`,

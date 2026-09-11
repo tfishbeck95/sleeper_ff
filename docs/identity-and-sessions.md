@@ -32,7 +32,16 @@ Rotation keeps the session's CSRF tokens, so no client work is needed. The retir
 
 **CSRF.** Every mutating API request must carry `X-CSRF-Token` matching a token issued to that session; the token lives only in the client's memory, never in storage. `GET /auth/session` restores a reloaded page from its cookie and mints a fresh token, and a session holds the last few tokens it issued so a second tab does not invalidate the first.
 
-**Rate limits.** Per-address budgets on sign-in, plus a per-account budget so a botnet cannot grind one login from many addresses. Authenticated budgets are charged to the user, not the address: Sleeper lookups, synchronization, recommendations, dashboards, the seven-call league detail route, and an overall ceiling on authenticated traffic. Counters live in the API process and are swept and capped, so rotating source addresses cannot grow them without bound. `req.ip` is only the real client once `TRUST_PROXY` matches the number of proxies in front of the API.
+**Rate limits.** Every budget is charged along two dimensions at once, because each alone has a hole the other closes.
+
+| Dimension | Keyed on | What it bounds | Why it is not enough alone |
+| --- | --- | --- | --- |
+| Address | `req.ip`, IPv6 collapsed to its /64 | An anonymous flood, and everything before a request is authenticated | A household, an office or a carrier NAT is one address, so it has to be loose — loose enough for one signed-in client to spend it all |
+| Session | The session *family* id, so a rotation does not reset it | One signed-in client, however many addresses it speaks from | It does not exist until a request is authenticated |
+
+A request is refused when either is exhausted, and **both are charged either way** — so a caller cannot keep one budget intact by deliberately overspending a cheaper one. Sign-in adds a third budget keyed on the submitted login, so a botnet cannot grind one account by spreading attempts across addresses. The endpoints are budgeted by what they cost us rather than by what a client wants: the seven-call league detail route is an order of magnitude below a dashboard read that touches only the store. Counters live in the API process and are swept and capped, so rotating source addresses cannot grow them without bound.
+
+`req.ip` is only the real client once `TRUST_PROXY` matches the deployment — see [deployment](deployment.md#configuration-that-must-be-right), where production refuses to guess.
 
 ## Development and demo isolation
 

@@ -19,7 +19,22 @@ export class SleeperApiError extends Error {
    */
   constructor(public readonly status: number, message: string, public readonly category: SleeperErrorCategory, public readonly retryable = false, public readonly retryAfterMs: number | null = null) { super(message); this.name = 'SleeperApiError'; }
 }
-export interface SleeperClientOptions { timeoutMs?: number; maxRetries?: number; backoffMs?: number; maxRetryAfterMs?: number; }
+export interface SleeperClientOptions {
+  timeoutMs?: number;
+  maxRetries?: number;
+  backoffMs?: number;
+  maxRetryAfterMs?: number;
+  /**
+   * The ceiling on one call in total, across every attempt and every wait between them.
+   *
+   * Per-attempt timeouts bound a slow answer; they do not bound a chain of them. Three attempts that
+   * each take the full timeout, with backoff, is a request held open for several times longer than
+   * any single number in this object suggests — which is how a browser ends up waiting a minute on a
+   * client configured to wait ten seconds. Retrying stops once the remaining budget cannot hold
+   * another attempt, and the last failure is thrown as it stands.
+   */
+  maxElapsedMs?: number;
+}
 
 /**
  * `Retry-After` as milliseconds, or null when the header is absent or unusable.
@@ -42,12 +57,17 @@ const arrayOf = (guard: (value: unknown) => boolean) => (value: unknown) => Arra
 export class SleeperClient {
   private readonly options: Required<SleeperClientOptions>;
   constructor(private readonly fetcher: typeof fetch = fetch, private readonly baseUrl = BASE_URL, options: SleeperClientOptions = {}) {
-    this.options = { timeoutMs: options.timeoutMs ?? 10_000, maxRetries: options.maxRetries ?? 2, backoffMs: options.backoffMs ?? 200, maxRetryAfterMs: options.maxRetryAfterMs ?? 5_000 };
+    this.options = { timeoutMs: options.timeoutMs ?? 10_000, maxRetries: options.maxRetries ?? 2, backoffMs: options.backoffMs ?? 200, maxRetryAfterMs: options.maxRetryAfterMs ?? 5_000, maxElapsedMs: options.maxElapsedMs ?? 20_000 };
   }
   private async get<T>(path: string, validate: (value: unknown) => boolean): Promise<T> {
+    const startedAt = Date.now();
     for (let attempt = 0; ; attempt += 1) {
+      // Each attempt gets whatever is left of the whole-call budget, so a chain of slow answers
+      // cannot outlive it even when every individual one is inside the per-attempt timeout.
+      const remaining = this.options.maxElapsedMs - (Date.now() - startedAt);
+      const timeoutMs = Math.max(1, Math.min(this.options.timeoutMs, remaining));
       try {
-        const response = await this.fetcher(`${this.baseUrl}${path}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(this.options.timeoutMs) });
+        const response = await this.fetcher(`${this.baseUrl}${path}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
         if (!response.ok) {
           const category: SleeperErrorCategory = response.status === 429 ? 'rate_limit' : response.status === 404 ? 'not_found' : response.status >= 500 ? 'server' : 'client';
           const retryAfterMs = parseRetryAfter(response.headers?.get?.('retry-after'));
@@ -64,6 +84,9 @@ export class SleeperClient {
         // because holding a request open for a minute is worse than answering from the last snapshot.
         const wait = normalized.retryAfterMs ?? this.options.backoffMs * 2 ** attempt;
         if (wait > this.options.maxRetryAfterMs) throw normalized;
+        // Waiting past the deadline to start an attempt that would be aborted immediately is worse
+        // than failing now: the caller waits the whole remainder to learn what is already known.
+        if (Date.now() - startedAt + wait >= this.options.maxElapsedMs) throw normalized;
         await new Promise(resolve => setTimeout(resolve, wait));
       }
     }

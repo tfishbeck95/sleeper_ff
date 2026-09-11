@@ -96,8 +96,21 @@ naming here:
 - **`WEB_ORIGIN`** is the exact origin, https outside local development, and may be a comma-separated
   pair during a cutover. A path is refused: the browser never sends one, so `https://host/app` would
   silently grant the whole host.
-- **`TRUST_PROXY`** is the number of proxies in front of the API. Too low and every client shares one
-  rate-limit bucket; too high and a client can spoof its own address by sending the header itself.
+- **`TRUST_PROXY`** says what sits in front of the API, and production will not guess. Both ways of
+  getting it wrong are silent: too low and every client shares one rate-limit bucket, so the first
+  person to exhaust it locks out everybody else; too high and Express reads a value the *client* put
+  in `X-Forwarded-For`, so a caller picks their own address, a fresh one per request, and the limits
+  stop existing. `TRUST_PROXY=true` is that second case unconditionally — it believes the whole
+  chain — and is **refused in production**. The topology above is one hop that rewrites the client
+  address, which is why [`deploy/compose.yaml`](../deploy/compose.yaml) sets `TRUST_PROXY: "1"`. An
+  API exposed directly is a legitimate deployment and sets `TRUST_PROXY=false`; what production
+  refuses is leaving it unset, because an unset value and a correct one look identical until load.
+- **`UPSTREAM_*`** are the timeout and retry budgets, defined once in
+  `apps/api/src/config/upstream.ts` and applied to both upstream clients. Each is a *whole* budget —
+  one attempt's timeout, the attempt count, the backoff ceiling, and the total across all of them —
+  because bounding each attempt does not bound their sum. Startup refuses a total shorter than one
+  attempt, and warns when the interactive total outlives `SHUTDOWN_GRACE_SECONDS`, which would mean
+  a drain cutting a request short rather than finishing it.
 
 ## Building and running the whole stack locally
 
@@ -118,6 +131,59 @@ rehearsing are the ones a single all-in-one process hides.
 > single-instance profile: one combined process on the JSON adapter with a persistent volume. Name the
 > service, or the PostgreSQL-backed ones start alongside it and take the same port. See
 > [storage](storage.md).
+
+## What the API asserts on every response
+
+Applied before routing, so they are on the responses no route handler produces either — the 404 from
+the router, the 415 from the body guard, the 429 from a limiter, the 500 from a defect. A header set
+inside a route is a header missing from every path that never reaches one.
+
+| Header | Value | Why |
+| --- | --- | --- |
+| `Content-Security-Policy` | `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; sandbox` | A JSON API looks like it has no browser surface until something makes a browser parse a response as a document — on this origin, holding the session cookie. The policy and the sandbox make that document inert. |
+| `X-Content-Type-Options` | `nosniff` | Stops the guess that turns a JSON body into `text/html` in the first place. |
+| `X-Frame-Options` | `DENY` | `frame-ancestors` for browsers that only know the older header. |
+| `Referrer-Policy` | `no-referrer` | A URL here can carry a league id; nothing downstream needs it. |
+| `Cross-Origin-Resource-Policy` | `same-site` | A response must not become a subresource of another site's page. `same-site`, not `same-origin`, because the dashboard is legitimately a sibling origin. |
+| `Cross-Origin-Opener-Policy`, `Origin-Agent-Cluster`, `X-Permitted-Cross-Domain-Policies`, `Permissions-Policy` | isolating defaults | Permissions this origin has never asked for are the easiest ones to keep. |
+| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` | Production only. Asserting it from a development server on plain http teaches the browser to refuse the development server. |
+| `X-Request-Id` | the request's id | Echoed on every response and repeated in the body of every failure, so a bug report can name the exact request and an operator can find its line in the log. |
+
+**CORS** is an exact-match list with no permissive fallback: no wildcard, no reflection of the
+request's own origin, and no development default in production — an unconfigured production
+deployment does not start, and the application cannot be *constructed* with an empty origin list
+either. Preflights allow only the methods and headers this API serves, so a request it does not
+serve fails at the preflight rather than at the router.
+
+**Cache-control** defaults to `private, no-store` with `Vary: Origin, Cookie`. Almost everything here
+is one account's view of one league, and the only thing distinguishing two accounts' requests for
+`/api/dashboard/1234` is a cookie. Two deliberate relaxations: `private, no-cache, must-revalidate`
+on the player directory and league detail, which are large, slow-changing and revalidate against an
+ETag; and `public` on the sample league, which is generated fiction with no account in it and is
+refused outright in production.
+
+**Request bodies** are parsed per route at that route's own size, not globally at the largest one —
+2kb for a login, 4kb for an account link — with a 16kb ceiling and a content-type check applied
+before any of them. A route that takes no body never reads one.
+
+**Failures are classified by what the caller can do about them.** A 4xx says what to fix, in a string
+this repository wrote, never echoing the value that was rejected. A 5xx says nothing but its class
+and the request id; the message, the stack and the failing path stay in the log. An upstream's 4xx is
+not the caller's 4xx: Sleeper answering 400 or 403 means *we* built a bad request, which is a 502.
+The exceptions are its 404, which genuinely means the league or user the caller named does not exist,
+and its 429, which is a 503 with `Retry-After` because the caller is not over any budget of theirs.
+
+**`/health` is public and says one field.** Not the version, the environment, the storage adapter,
+the worker's identity, whether an upstream is reachable, or any path — an orchestrator needs none of
+them to decide whether to keep routing here, and everything else would be published to whoever asks.
+The worker's own probe on `WORKER_HEALTH_PORT` answers the same way.
+
+**Logs are one JSON object per line, redacted on the way out.** Four classes of value never reach one,
+and each of them gets there by accident rather than on purpose: session ids and CSRF tokens (and
+their digests, which authenticate just as well), the forecast subscription key, absolute filesystem
+paths — `ENOENT ... open '/var/lib/huddle/store.json'` is the deployment's layout, published — and
+personal settings, where an account appears as a stable digest rather than as a login. `LOG_LEVEL`
+sets the floor; `silent` turns a process's own logging off.
 
 ## The web build
 

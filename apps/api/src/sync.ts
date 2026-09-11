@@ -1,12 +1,14 @@
 import { liveScoring, scoringUnavailable, type ScoringConfiguration } from '@sleeper/domain';
 import type { League, Matchup, Roster, TradedDraftPick, Transaction, User, WeeklySnapshot } from '@sleeper/domain';
-import { SleeperApiError, SleeperClient, type SleeperDraftPick, type SleeperLeague, type SleeperMatchup, type SleeperRoster, type SleeperTransaction } from '@sleeper/sleeper-client';
+import { SleeperApiError, type SleeperClient, type SleeperDraftPick, type SleeperLeague, type SleeperMatchup, type SleeperRoster, type SleeperTransaction } from '@sleeper/sleeper-client';
 import type { SyncWrite } from './store.js';
 import type {
   LeagueRepository, LeaseRepository, PlayerRepository, RosterRepository, SnapshotWriteRepository, SyncRunRepository,
 } from './storage/repositories.js';
 
 import { PlayerDirectoryService, PLAYER_REFRESH_MS } from './players.js';
+import { logger } from './log.js';
+import { sleeperClient } from './config/upstream.js';
 
 /** What one league's synchronization touches: the league, its rosters, the shared directory and the log. */
 type LeagueSyncRepository = LeagueRepository & RosterRepository & SnapshotWriteRepository & SyncRunRepository & PlayerRepository & LeaseRepository;
@@ -14,13 +16,13 @@ type LeagueSyncRepository = LeagueRepository & RosterRepository & SnapshotWriteR
 export const REFRESH_AFTER_MS = { users: 6 * 60 * 60_000, rosters: 5 * 60_000, matchups: 2 * 60_000, transactions: 2 * 60_000, draftPicks: 5 * 60_000, players: PLAYER_REFRESH_MS } as const;
 export interface SyncResult { leagueId: string; synchronizedAt: string; refreshed: string[]; snapshotId?: string; scoring: ScoringConfiguration; }
 export interface SyncLogger { info(fields: Record<string, unknown>, message: string): void; error(fields: Record<string, unknown>, message: string): void; }
-const defaultLogger: SyncLogger = { info: (fields, message) => console.info(message, fields), error: (fields, message) => console.error(message, fields) };
+const defaultLogger: SyncLogger = { info: (fields, message) => logger.info({ component: 'league-sync', ...fields }, message), error: (fields, message) => logger.error({ component: 'league-sync', ...fields }, message) };
 const isoFromEpoch = (epoch?: number) => epoch ? new Date(epoch).toISOString() : null;
 const source = (synchronizedAt: string, epoch?: number) => ({ sourceUpdatedAt: isoFromEpoch(epoch), synchronizedAt });
 
 export class LeagueSyncService {
   private readonly locks = new Map<string, Promise<SyncResult>>();
-  constructor(private readonly store: LeagueSyncRepository, private readonly client = new SleeperClient(), private readonly logger: SyncLogger = defaultLogger, private readonly now = () => new Date()) {}
+  constructor(private readonly store: LeagueSyncRepository, private readonly client = sleeperClient('interactive'), private readonly logger: SyncLogger = defaultLogger, private readonly now = () => new Date()) {}
   syncLeague(leagueId: string, week: number, force = false): Promise<SyncResult> {
     const existing = this.locks.get(leagueId); if (existing) return existing;
     const job = this.perform(leagueId, week, force).finally(() => this.locks.delete(leagueId)); this.locks.set(leagueId, job); return job;

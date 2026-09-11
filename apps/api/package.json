@@ -12,7 +12,7 @@
     "dev:worker": "tsx watch --conditions=@sleeper/source src/worker.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --conditions=@sleeper/source --test src/*.test.ts src/config/*.test.ts src/providers/*.test.ts src/scheduler/*.test.ts src/storage/*.test.ts",
+    "test": "LOG_LEVEL=silent tsx --conditions=@sleeper/source --test src/*.test.ts src/config/*.test.ts src/http/*.test.ts src/providers/*.test.ts src/scheduler/*.test.ts src/storage/*.test.ts",
     "password-hash": "tsx --conditions=@sleeper/source src/password-hash.ts",
     "ingest": "tsx --conditions=@sleeper/source src/providers/ingest-cli.ts",
     "migrations:check": "tsx --conditions=@sleeper/source src/storage/migrations-cli.ts",

@@ -2,6 +2,7 @@ import type { CoverageReport } from './coverage.js';
 import type { DerivationNote } from './derivation.js';
 import type { IdentityResolution } from './identity.js';
 import type { FeedProvenance, UnresolvedIdentity } from './provider.js';
+import { logger } from '../log.js';
 
 /**
  * What one ingestion did, and whether it was good enough to rely on.
@@ -152,7 +153,7 @@ export interface Alerter { alert(event: AlertEvent): Promise<void> | void }
 
 /** The default: structured to stderr, where a container's log pipeline already collects it. */
 export class ConsoleAlerter implements Alerter {
-  constructor(private readonly log: (fields: Record<string, unknown>, message: string) => void = (fields, message) => console.error(message, fields)) {}
+  constructor(private readonly log: (fields: Record<string, unknown>, message: string) => void = (fields, message) => logger.error({ component: 'projection-feed', ...fields }, message)) {}
   alert(event: AlertEvent) {
     this.log({
       season: event.season, week: event.week, status: event.status, severity: event.severity,
@@ -184,7 +185,7 @@ export class WebhookAlerter implements Alerter {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
-      console.error('[projection-feed] alert delivery failed', { message: error instanceof Error ? error.message : String(error) });
+      logger.error({ component: 'projection-feed', error }, 'alert delivery failed');
     }
   }
 }

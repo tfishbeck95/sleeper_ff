@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { NflPlayer } from '@sleeper/domain';
-import { SleeperApiError, SleeperClient, type SleeperMatchup, type SleeperRoster, type SleeperTransaction } from '@sleeper/sleeper-client';
+import { SleeperApiError, type SleeperClient, type SleeperMatchup, type SleeperRoster, type SleeperTransaction } from '@sleeper/sleeper-client';
 import type { LeaseRepository, PlayerRepository } from './storage/repositories.js';
+import { logger } from './log.js';
+import { sleeperClient } from './config/upstream.js';
 
 /** The directory and the lease that keeps one refresh in flight at a time. */
 type PlayerDirectoryRepository = PlayerRepository & LeaseRepository;
@@ -47,17 +49,21 @@ export function leaguePlayerIds(rosters: SleeperRoster[], matchups: SleeperMatch
 }
 
 export class PlayerDirectoryService {
-  constructor(private readonly store: PlayerDirectoryRepository, private readonly client = new SleeperClient(), private readonly now = () => new Date()) {}
+  constructor(private readonly store: PlayerDirectoryRepository, private readonly client = sleeperClient('interactive'), private readonly now = () => new Date()) {}
 
   /** Serve stored availability immediately during a slow refresh. Cold starts get a short budget
    * to populate names, then return placeholders while ingestion continues in the background. */
   async prepareRead() {
     const { metadata, players } = await this.store.playerDirectory();
     if (metadata && Date.parse(metadata.nextAttemptAt) > this.now().getTime()) return;
-    const refresh = this.refresh().catch(error => { console.error('[players] storage failure', error); });
+    const refresh = this.refresh().catch(error => { logger.error({ component: 'players', error }, 'player directory storage failure'); });
     if (metadata?.synchronizedAt || Object.keys(players).length) return;
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    try { await Promise.race([refresh, new Promise<void>(resolve => { timeout = setTimeout(resolve, 1_000); timeout.unref(); })]); }
+    // Not unref'd. An unref'd timer does not hold the event loop open, so the budget only elapsed
+    // when something else — a listening server — happened to be holding it; with nothing else
+    // pending, the race never settled at all and this call hung. It is cleared in `finally` either
+    // way, so the most it can hold the loop for is the one second it is meant to wait.
+    try { await Promise.race([refresh, new Promise<void>(resolve => { timeout = setTimeout(resolve, 1_000); })]); }
     finally { clearTimeout(timeout); }
   }
 
@@ -90,7 +96,7 @@ export class PlayerDirectoryService {
         const category = error instanceof SleeperApiError ? error.category : 'network';
         const delay = Math.max(PLAYER_RETRY_MS, error instanceof SleeperApiError ? error.retryAfterMs ?? 0 : 0);
         await this.store.savePlayerDirectory({ synchronizedAt: previous?.synchronizedAt ?? null, lastAttemptedAt: at, nextAttemptAt: new Date(now.getTime() + delay).toISOString(), lastError: category });
-        console.error('[players] refresh failed; retaining last good directory', { category, synchronizedAt: previous?.synchronizedAt ?? null });
+        logger.error({ component: 'players', category, synchronizedAt: previous?.synchronizedAt ?? null }, 'player directory refresh failed; retaining the last good directory');
         return false;
       }
     } finally { await this.store.releaseLease('players:nfl', owner); }

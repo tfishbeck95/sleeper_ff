@@ -10,6 +10,7 @@ export type LeagueSyncWorkerRepository = LeagueConnectionRepository & LeagueRepo
 import type { SyncResult } from '../sync.js';
 import { StoreSyncLock, type LeaseHandle, type SyncLock } from './lock.js';
 import { leagueIsHistorical, resolveSyncTarget } from './week.js';
+import { logger } from '../log.js';
 
 /**
  * The background league synchronization worker.
@@ -90,7 +91,7 @@ export const SWEEP_LEASE_KEY = 'league-sync:sweep';
 export const leagueLeaseKey = (leagueId: string) => `league-sync:league:${leagueId}`;
 
 interface PendingJob extends SyncJob { done: Promise<JobResult>; settle: (result: JobResult) => void; }
-const defaultLogger: WorkerLogger = { info: (fields, message) => console.info(message, fields), error: (fields, message) => console.error(message, fields) };
+const defaultLogger: WorkerLogger = { info: (fields, message) => logger.info({ component: 'league-sync', ...fields }, message), error: (fields, message) => logger.error({ component: 'league-sync', ...fields }, message) };
 const wait = (ms: number) => new Promise<void>(resolve => { const timer = setTimeout(resolve, ms); timer.unref?.(); });
 
 export class LeagueSyncWorker {
