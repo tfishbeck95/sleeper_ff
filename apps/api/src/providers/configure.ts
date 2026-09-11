@@ -66,6 +66,22 @@ function weekOneTuesday(year: number): Date {
   return new Date(laborDay.getTime() + 86_400_000);
 }
 
+/**
+ * The read side of the feed: the retained snapshot, and no way to fetch a new one.
+ *
+ * Ingestion and reading are separate privileges. An API instance serves advice from whatever the
+ * worker last retained; it never calls the source, so it has no use for the subscription key and is
+ * not given one. Building the full runtime just to reach `.store` would drag the provider — and its
+ * `requireCredential` — into a process that has no business holding the credential.
+ *
+ * Returns null when the feed is not enabled, which is the same signal `configureProjectionFeed`
+ * returns: the file-based `WAIVER_SIGNALS_PATH` adapter serves forecasts instead.
+ */
+export function configureProjectionFeedReader(env: NodeJS.ProcessEnv = process.env): ProjectionFeedStore | null {
+  if (!projectionFeedEnabled(env)) return null;
+  return new ProjectionFeedStore(new FileFeedRepository(resolve(env.PROJECTION_FEED_PATH ?? '../../data/projection-feed.json')), serviceLevelFromEnv(env));
+}
+
 export interface ProjectionFeedRuntime {
   store: ProjectionFeedStore;
   ingestion: ProjectionIngestionService;

@@ -111,6 +111,8 @@ const defaultLogger = { info: (fields: Record<string, unknown>, message: string)
 export class IngestionSchedule {
   private timer: unknown = null;
   private stopped = false;
+  /** The ingestion in progress, so shutdown can wait for it. Never rejects: `ingest` handles its own failures. */
+  private running: Promise<IngestionReport | null> | null = null;
   private readonly options: Required<Omit<ScheduleOptions, 'setTimer' | 'clearTimer' | 'logger'>> & Pick<ScheduleOptions, 'setTimer' | 'clearTimer'> & { logger: NonNullable<ScheduleOptions['logger']> };
 
   constructor(
@@ -152,7 +154,22 @@ export class IngestionSchedule {
     this.timer = timer;
   }
 
-  private async run(trigger: string): Promise<IngestionReport | null> {
+  /**
+   * Resolves once an ingestion already under way has finished.
+   *
+   * `stop` cancels the next run; it says nothing about the one in progress. A window that fires
+   * seconds before a deployment is otherwise abandoned part-way through resolving identities, which
+   * costs the upstream call and produces nothing.
+   */
+  async settled(): Promise<void> { await this.running; }
+
+  private run(trigger: string): Promise<IngestionReport | null> {
+    const attempt = this.ingest(trigger).finally(() => { if (this.running === attempt) this.running = null; });
+    this.running = attempt;
+    return attempt;
+  }
+
+  private async ingest(trigger: string): Promise<IngestionReport | null> {
     const { season, week } = this.target();
     try {
       const report = await this.service.ingest(season, week);

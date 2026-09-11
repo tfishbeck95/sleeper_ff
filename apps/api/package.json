@@ -1,1 +1,37 @@
-{"name":"@sleeper/api","version":"0.1.0","private":true,"type":"module","scripts":{"dev":"tsx watch src/index.ts","start":"tsx src/index.ts","build":"tsc -p tsconfig.json","typecheck":"tsc -p tsconfig.json --noEmit","test":"tsx --test src/*.test.ts src/providers/*.test.ts src/scheduler/*.test.ts src/storage/*.test.ts","password-hash":"tsx src/password-hash.ts","ingest":"tsx src/providers/ingest-cli.ts","migrations:check":"tsx src/storage/migrations-cli.ts"},"dependencies":{"@sleeper/domain":"*","@sleeper/sleeper-client":"*","cors":"^2.8.5","express":"^5.1.0"},"devDependencies":{"@types/cors":"^2.8.17","@types/express":"^5.0.1","@types/node":"^22.13.10","supertest":"^7.1.0","@types/supertest":"^6.0.3","tsx":"^4.19.2"}}
+{
+  "name": "@sleeper/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --conditions=@sleeper/source src/index.ts",
+    "start": "node dist/index.js",
+    "start:api": "node dist/api.js",
+    "start:worker": "node dist/worker.js",
+    "dev:api": "tsx watch --conditions=@sleeper/source src/api.ts",
+    "dev:worker": "tsx watch --conditions=@sleeper/source src/worker.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --conditions=@sleeper/source --test src/*.test.ts src/config/*.test.ts src/providers/*.test.ts src/scheduler/*.test.ts src/storage/*.test.ts",
+    "password-hash": "tsx --conditions=@sleeper/source src/password-hash.ts",
+    "ingest": "tsx --conditions=@sleeper/source src/providers/ingest-cli.ts",
+    "migrations:check": "tsx --conditions=@sleeper/source src/storage/migrations-cli.ts",
+    "migrations:status": "migrations/apply.sh --status",
+    "migrations:apply": "migrations/apply.sh",
+    "migrations:rollback": "migrations/rollback.sh"
+  },
+  "dependencies": {
+    "@sleeper/domain": "*",
+    "@sleeper/sleeper-client": "*",
+    "cors": "^2.8.5",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.13.10",
+    "supertest": "^7.1.0",
+    "@types/supertest": "^6.0.3",
+    "tsx": "^4.19.2"
+  }
+}

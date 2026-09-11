@@ -190,6 +190,20 @@ export class LeagueSyncWorker {
   }
 
   /**
+   * Resolves once this worker is holding nothing: no job in flight, no sweep part-way through.
+   *
+   * `drain` alone is not enough for a shutdown. The sweep releases its lease in a `finally` after the
+   * jobs it queued have settled, and it queues leagues one at a time — so a drain can find the queue
+   * momentarily empty while the sweep is still filling it, and can return before the lease has been
+   * handed back. Draining, waiting for the sweep, then draining again covers both.
+   */
+  async settled(): Promise<void> {
+    await this.drain();
+    await this.sweeping?.catch(() => undefined);
+    await this.drain();
+  }
+
+  /**
    * One pass over every connected league.
    *
    * The sweep lease is what makes this safe to run on every instance of a horizontally scaled

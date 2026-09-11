@@ -1,0 +1,14 @@
+{
+  "//": "The production build. Tests, test support and the conformance suite are excluded so the runtime image carries only the code it runs — and so supertest, a development dependency, is never imported from an image installed with --omit=dev.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "sourceMap": true,
+    "removeComments": false
+  },
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/test-support",
+    "src/storage/contract.ts"
+  ]
+}

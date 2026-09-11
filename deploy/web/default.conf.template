@@ -1,0 +1,62 @@
+# Serving the dashboard bundle.
+#
+# Two cache policies, and the split between them is most of this file. Everything under `/assets/`
+# carries a content hash in its name, so a given URL's bytes never change and it can be cached forever.
+# `index.html` names those files, so it must not be: a visitor holding a cached `index.html` is pinned
+# to the release it was built from and keeps asking for asset files a later deploy has already removed.
+# The same split applies at a CDN — see docs/deployment.md.
+#
+# The policy is chosen by a `map` and applied once, rather than by `add_header` inside each location.
+# nginx does not merge `add_header` across levels: a location that adds one header discards every header
+# set above it, which is how a security header quietly stops being sent from one path and not another.
+#
+# `${API_ORIGIN}` is substituted at container start by the nginx image's entrypoint. It defaults to
+# `'self'`, which is right when the API is reverse-proxied onto this same origin; a separately hosted
+# API goes here so `connect-src` allows the dashboard to reach it.
+
+map $uri $huddle_cache_control {
+    default      "no-cache";
+    ~^/assets/   "public, max-age=31536000, immutable";
+}
+
+server {
+    listen       8080;
+    server_name  _;
+    root         /usr/share/nginx/html;
+
+    add_header Cache-Control           $huddle_cache_control always;
+    add_header X-Content-Type-Options  "nosniff" always;
+    add_header Referrer-Policy         "strict-origin-when-cross-origin" always;
+    # The dashboard is never framed, and `frame-ancestors` in the policy below says so to browsers that
+    # honour it; this covers the ones that only know the header.
+    add_header X-Frame-Options         "DENY" always;
+    # `style-src` allows inline styles because the dashboard sets a few style attributes directly, and a
+    # style attribute is inline style as far as a browser is concerned. Scripts have no such allowance:
+    # the bundle is the only script that runs.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ${API_ORIGIN}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
+
+    # The dashboard is one page and routes inside the browser, so an unknown path is a route to render
+    # rather than a 404.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # An asset that is missing must 404 rather than fall through to the HTML document, which would
+    # otherwise arrive at the browser as a syntax error inside a script tag.
+    location /assets/ {
+        try_files $uri =404;
+    }
+
+    # Source maps are built for every release and are not secret — the bundle they describe is already
+    # public — but they are large and only useful to someone with a debugger open, so they are not
+    # served. Upload them to the error tracker instead.
+    location ~ \.map$ {
+        return 404;
+    }
+
+    gzip              on;
+    gzip_vary         on;
+    gzip_min_length   1024;
+    gzip_proxied      any;
+    gzip_types        text/plain text/css application/javascript application/json image/svg+xml;
+}

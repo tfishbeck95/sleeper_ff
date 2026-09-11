@@ -109,6 +109,8 @@ export class JsonStore implements HuddleRepository {
     const operation = this.writes.then(async () => { const data = await this.read(); mutator(data); await mkdir(dirname(this.path), { recursive: true }); const temp = `${this.path}.${process.pid}.tmp`; await writeFile(temp, JSON.stringify(data, null, 2)); await rename(temp, this.path); });
     this.writes = operation.catch(() => undefined); return operation;
   }
+  /** Waits for every queued write to land. Writes are serialized, so awaiting the tail awaits them all. */
+  async close() { await this.writes; }
   async snapshot(id: string) { return (await this.read()).snapshots[id]; }
   async save(snapshot: LeagueSnapshot) { await this.write(data => { data.snapshots[snapshot.leagueId] = snapshot; data.syncLog.unshift({ leagueId: snapshot.leagueId, syncedAt: snapshot.lastSyncedAt, status: 'success' }); data.syncLog = data.syncLog.slice(0, 100); }); }
   async resourceSyncedAt(key: string) { return (await this.read()).freshness[key]; }

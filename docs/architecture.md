@@ -58,7 +58,28 @@ recovery procedures that have to be in place before the first migration that sto
 
 ## Deployment model
 
-Build the web application as static assets served through a CDN. Run the API as a single container with a persistent volume for the local profile (`STORAGE_ADAPTER=json`), or on PostgreSQL for horizontally scaled deployments (`STORAGE_ADAPTER=postgres`, with `apps/api/migrations` applied first). In scaled production, run the synchronization worker on one instance or as a managed job (`SYNC_WORKER_ENABLED=false` everywhere else) and implement `SyncLock` over the `sync_lease` table rather than the JSON document: the sweep lease keeps one instance in charge and the per-league lease keeps a league from being synchronized twice at once, but the file-backed implementation is only atomic within a process — which is why `APP_INSTANCE_MODE=multi` refuses the JSON adapter in production. See [`docs/league-sync.md`](league-sync.md). Terminate TLS at the edge, restrict CORS to the web origin, inject configuration through environment variables, rotate bearer/session keys, and expose `/health` to orchestration.
+Build the web application as static assets served through a CDN or the static server in
+[`deploy/web.Dockerfile`](../deploy/web.Dockerfile). The API and the worker are two entrypoints over one
+composition root and ship as one image: `dist/api.js` serves HTTP and runs no clocks, `dist/worker.js`
+owns every schedule and serves no traffic, and `dist/index.js` is both for an installation with a
+single instance. Run the API as a single container with a persistent volume for the local profile
+(`STORAGE_ADAPTER=json`), or on PostgreSQL for horizontally scaled deployments
+(`STORAGE_ADAPTER=postgres`, with `apps/api/migrations` applied by the migration job first).
+
+In scaled production, run the synchronization worker once (`SYNC_WORKER_ENABLED=false` on every API
+instance) and implement `SyncLock` over the `sync_lease` table rather than the JSON document: the sweep
+lease keeps one instance in charge and the per-league lease keeps a league from being synchronized
+twice at once, but the file-backed implementation is only atomic within a process — which is why
+`APP_INSTANCE_MODE=multi` refuses the JSON adapter in production. See
+[`docs/league-sync.md`](league-sync.md).
+
+Terminate TLS at the edge, restrict CORS to the exact web origins, inject configuration through
+environment variables — the process validates all of it before building anything from it and reports
+every problem at once — rotate session keys, and expose `/health` to orchestration, which answers 503
+from the moment a shutdown begins so a load balancer stops routing before the listener closes. The
+forecast subscription key goes to the worker alone, because the worker is the only process that calls
+the source. [`docs/deployment.md`](deployment.md) is the full procedure, including which component
+holds which secret, the release order, the rollback, and the staging environment.
 
 ### Scoring provenance and validation
 

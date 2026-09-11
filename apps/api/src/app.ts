@@ -13,6 +13,8 @@ import { analyzeLineup } from './lineup.js';
 import { randomUUID } from 'node:crypto';
 import { authentication, clearSessionCookie, csrf, demoEnabled, issueCsrfToken, issueSession, rotateSession, sessionCookie, sessionPolicy, verifyLogin, type Authentication } from './auth.js';
 import { bySession, rateLimit, trustProxySetting } from './rate-limit.js';
+import { webOrigins } from './config/origins.js';
+import { isDraining } from './lifecycle.js';
 import { demoLineupInput } from './lineup-demo.js';
 function publicUser(user: import('./store.js').ApplicationUser){return {id:user.id,login:user.login,sleeperUserId:user.sleeperUserId,sleeperUsername:user.sleeperUsername,sleeperLeagueIds:user.sleeperLeagueIds};}
 /**
@@ -45,11 +47,13 @@ const leagueDetail=rateLimit({bucket:'league-detail',max:20,windowMs:60_000,key:
 const dashboards=rateLimit({bucket:'dashboard',max:120,windowMs:60_000,key:bySession});
 const authenticatedTraffic=rateLimit({bucket:'api',max:600,windowMs:60_000,key:bySession});
 const accountTraffic=rateLimit({bucket:'account',max:120,windowMs:60_000,key:bySession});
-export function createApp(store: HuddleRepository, sleeper = new SleeperClient(), sync = new LeagueSyncService(store, sleeper), signals: WaiverSignalProvider = new FileWaiverSignalProvider(), worker = new LeagueSyncWorker(store, sync)) { const app=express(); app.disable('x-powered-by'); app.set('trust proxy',trustProxySetting()); app.use(cors({origin:process.env.WEB_ORIGIN ?? 'http://localhost:5173', credentials:true})); app.use(express.json({limit:'32kb'}));
+export function createApp(store: HuddleRepository, sleeper = new SleeperClient(), sync = new LeagueSyncService(store, sleeper), signals: WaiverSignalProvider = new FileWaiverSignalProvider(), worker = new LeagueSyncWorker(store, sync)) { const app=express(); app.disable('x-powered-by'); app.set('trust proxy',trustProxySetting()); app.use(cors({origin:webOrigins(), credentials:true})); app.use(express.json({limit:'32kb'}));
  const players = new PlayerDirectoryService(store, sleeper);
  const commandCenter = new CommandCenterService(store, sync, signals);
  const policy=sessionPolicy();
- app.get('/health',(_req,res)=>res.json({status:'ok'}));
+ // A draining instance reports unhealthy so the load balancer stops sending it new requests while it
+ // finishes the ones it already has. It keeps answering them: `server.close()` only stops new connections.
+ app.get('/health',(_req,res)=>isDraining()?res.status(503).json({status:'shutting-down'}):res.json({status:'ok'}));
  app.post('/auth/login', signIn, signInToAccount, async(req,res)=>{const login=typeof req.body?.login==='string'?req.body.login.trim().toLowerCase():'';const password=typeof req.body?.password==='string'?req.body.password:'';const user=await store.applicationUserByLogin(login);if(!await verifyLogin(user,password))return res.status(401).json({error:'Invalid login or password.'});const issued=await issueSession(store,user!,policy);res.append('Set-Cookie',sessionCookie(issued.rawSessionId,issued.maxAge)).json({user:publicUser(user!),csrfToken:issued.csrfToken,expiresAt:issued.session.expiresAt});});
  app.post('/auth/demo', rateLimit({bucket:'demo-login',max:60,windowMs:15*60_000}), async(_req,res)=>{if(!demoEnabled())return res.status(404).json({error:'Not found.'});let user=await store.applicationUserByLogin('demo');if(!user){user={id:randomUUID(),login:'demo',passwordHash:'disabled',sleeperUserId:'sample',sleeperUsername:'sample',sleeperLeagueIds:['demo','1234'],createdAt:new Date().toISOString()};await store.saveApplicationUser(user);}const issued=await issueSession(store,user,policy);res.append('Set-Cookie',sessionCookie(issued.rawSessionId,issued.maxAge)).json({user:publicUser(user),csrfToken:issued.csrfToken,expiresAt:issued.session.expiresAt});});
  const requireAuth=authentication(store,policy);

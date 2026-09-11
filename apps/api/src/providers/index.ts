@@ -7,7 +7,7 @@
  * redistribution. See docs/projection-provider.md.
  */
 export { assessCoverage, familiesFor, type CoverageReport, type Family, type FamilyCoverage } from './coverage.js';
-export { alerterFromEnv, configureProjectionFeed, currentNflWeek, projectionFeedEnabled, serviceLevelFromEnv, type ConfigureOptions, type ProjectionFeedRuntime } from './configure.js';
+export { alerterFromEnv, configureProjectionFeed, configureProjectionFeedReader, currentNflWeek, projectionFeedEnabled, serviceLevelFromEnv, type ConfigureOptions, type ProjectionFeedRuntime } from './configure.js';
 export { deriveDefenseForecast, deriveKickerForecast, NFLVERSE_BASIS, type DerivationNote, type EmpiricalBasis } from './derivation.js';
 export { FileFeedRepository, InMemoryFeedRepository, ProjectionFeedStore, type FeedRepository, type FeedState, type StoredFeed } from './feed-store.js';
 export { ProviderFetchError, ProviderHttpClient, requireCredential } from './http.js';
