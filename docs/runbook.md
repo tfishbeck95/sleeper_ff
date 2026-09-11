@@ -357,6 +357,33 @@ if the old password is the reason you are rotating.
   which is the entire point of the readiness/liveness split. `/health/live` stays 200 throughout.
 - **`no_feed` on an installation with no data licence.** Supported configuration.
 
+## Vulnerability scanning, and what it blocks on
+
+Two scans, with two different jobs.
+
+**The dependency scan blocks everywhere.** `npm audit --omit=dev` plus a trivy filesystem scan over
+the lockfile, in the `audit` job. An advisory there is fixed by the change that introduces it, so
+there is no reason not to gate on it.
+
+**The image scan reports on a pull request and blocks on `main` and on the weekly run**, and its gate
+covers OS packages only. The reasoning is the same in both halves: gate on what a change can fix.
+
+- Each Dockerfile runs `apk --no-cache upgrade` in its runtime stage, so the OS packages are ours to
+  keep current. A finding there means either that stopped working or Alpine published something the
+  base image has not picked up — both actionable, both gated.
+- A binary vendored into an upstream base image is not. `gosu` in `postgres:17-alpine` is the
+  standing example: a static Go binary that drops privileges at container start, carrying Go stdlib
+  advisories in `crypto/tls`, `net/url` and `net/mail`. Nothing here builds it, `apk` cannot touch
+  it, and it is fixed only when its maintainers rebuild against a newer Go. None of those code paths
+  is reachable from what gosu does.
+
+The full report is printed on every run regardless, so nothing is filtered away before anyone sees
+it — only the gate is narrowed. **If a finding appears that a change here could fix, it blocks.**
+
+When the weekly run goes red, that is the signal to look: something in the OS layer has a published
+fix the build is not picking up. Start by rebuilding the images locally and reading the diff in
+`apk upgrade`'s output.
+
 ## Where the numbers come from
 
 | Question | Where |

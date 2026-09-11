@@ -209,6 +209,11 @@ sidecar rather than behind a token that ends up in a scrape configuration in a r
 | Storage query latency and failures by operation; pool utilization | Timed at the repository seam, so the numbers exist for the JSON adapter today and for PostgreSQL the day it lands. The pool series are *absent* rather than zero when there is no pool. |
 | Worker sweep lag, queue depth, jobs in flight, lock contention | Lag is what separates "the worker is running" from "the worker is keeping up" — a worker stuck behind a slow upstream answers its probe perfectly. Sweep-lease contention means a second worker is running that `SYNC_WORKER_ENABLED=false` should have opted out. |
 
+The image scan's gate covers OS packages, which each Dockerfile keeps current with `apk upgrade`, and
+not binaries vendored into an upstream base image — `gosu` in `postgres:17-alpine` carries Go stdlib
+advisories that nothing here builds and `apk` cannot touch. The full report is printed either way; see
+the [runbook](runbook.md#vulnerability-scanning-and-what-it-blocks-on).
+
 **Alerting comes in two forms, and you want exactly one of them.** An installation with Prometheus
 should scrape `/metrics` and load [`deploy/alerts/huddle.rules.yml`](../deploy/alerts/huddle.rules.yml),
 which expresses the conditions with proper windows and `for` durations. An installation without one
