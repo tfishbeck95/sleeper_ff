@@ -1,0 +1,56 @@
+# What never reaches a build context, and therefore never reaches an image layer.
+#
+# A `COPY . .` copies whatever is here, and a file copied into an early layer stays in the image even
+# if a later layer deletes it — `docker history` and an exported filesystem both still have it. So the
+# exclusions below are the boundary, not a `RUN rm` further down.
+
+# --- Secrets ---
+# Every local environment file. `.env` holds the session password hash, the database URL and the
+# forecast subscription key; a developer's copy in an image is a credential shipped to a registry.
+# Configuration reaches a container through the environment or a secret mount, never through a layer.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+secrets/
+.npmrc
+
+# --- Licensed and local data ---
+# The forecast source's own records. The SportsDataIO licence permits use, not redistribution, and an
+# image is redistribution: it is pushed to a registry and pulled by anything that can reach it. The
+# feed a container reads is a mounted volume the worker wrote, never something baked in.
+data/
+!data/.gitkeep
+*.waiver-signals.json
+projection-feed.json
+
+# --- Build output and caches, which the image builds for itself ---
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+**/*.tsbuildinfo
+.vite
+coverage
+
+# --- Repository and editor noise ---
+.git
+.gitignore
+.github
+.DS_Store
+**/.DS_Store
+*.log
+.vscode
+.idea
+
+# --- Things no runtime image needs ---
+docs
+README.md
+**/README.md
+deploy/compose.yaml
+deploy/compose.staging.yaml

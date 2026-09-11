@@ -18,7 +18,29 @@ Open `http://localhost:5173`. Configure an application login first; session cook
 - `npm test` — run domain, API and web tests.
 - `npm run typecheck` — type-check every workspace.
 
-Copy `.env.example` to `.env` to customize local configuration. See [`docs/product-scope.md`](docs/product-scope.md) for product boundaries and [`docs/architecture.md`](docs/architecture.md) for system design.
+Copy `.env.example` to `.env` to customize local configuration. Every value in it is validated before
+anything is built from it, and every problem is reported at once rather than one per restart. See
+[`docs/product-scope.md`](docs/product-scope.md) for product boundaries and
+[`docs/architecture.md`](docs/architecture.md) for system design.
+
+## Deployment
+
+Three images built from one commit: the API and the worker share one, the migrations are their own, and
+the dashboard is a static bundle for a CDN or the static server beside it. The API serves HTTP and runs
+no clocks; one worker owns every schedule and is the only process holding the forecast subscription
+key; a migration job applies the pending schema versions and exits before either starts. Stopping any
+of them drains — requests already being served finish, a synchronization part-way through replacing a
+league's rows is not abandoned, and leases are released rather than left to expire.
+
+```bash
+cd deploy && cp .env.example .env && $EDITOR .env
+docker compose up --build              # PostgreSQL, migrations, API, worker, dashboard
+docker compose --profile single up single   # or: one process, JSON adapter, one volume
+```
+
+[`docs/deployment.md`](docs/deployment.md) is the full procedure: which component holds which secret,
+the CDN cache policy, the release order, the rollback, and the staging environment — separate database,
+separate credentials, separate league connections.
 
 ## Storage
 

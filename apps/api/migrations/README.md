@@ -3,25 +3,44 @@
 PostgreSQL schema for the Huddle repository interfaces in [`../src/storage`](../src/storage). One
 numbered pair per change: `NNNN_name.up.sql` applies it, `NNNN_name.down.sql` rolls it back.
 
-Nothing runs these automatically. They are applied by an operator or a deployment step, before the
-process that needs them starts — see [`docs/data-durability.md`](../../../docs/data-durability.md) for
-what has to be true before the first one that stores user data is applied.
+Nothing runs these on its own. They are applied by a deployment step, before the release that needs
+them starts — see [`docs/deployment.md`](../../../docs/deployment.md) for where that step sits in a
+deployment, and [`docs/data-durability.md`](../../../docs/data-durability.md) for what has to be true
+before the first one that stores user data is applied.
 
-## Applying and rolling back
+## Applying
 
-Each file opens its own transaction, so a failed migration leaves the database exactly as it was:
-
-```bash
-for file in migrations/*.up.sql; do
-  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$file"
-done
-```
-
-Roll back in reverse order, one version at a time:
+[`apply.sh`](apply.sh) applies the versions this database has not got yet, in order:
 
 ```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0007_recommendations.down.sql
+DATABASE_URL=postgres://huddle@db/huddle migrations/apply.sh   # apply everything pending
+DATABASE_URL=... migrations/apply.sh --status                  # what is applied, what is pending
+DATABASE_URL=... migrations/apply.sh --dry-run                 # say what would be applied
+DATABASE_URL=... migrations/apply.sh --to 0005                 # stop after 0005
 ```
+
+It asks `schema_migrations` what is already applied rather than trusting a deployment log, so re-running
+it applies nothing twice — which matters because a migration is not idempotent in general, and one that
+backfills would do it again. Each file opens its own transaction, so a failure leaves the database
+exactly as it was and the versions before it stay applied and recorded; fix the file and run it again.
+The whole run is one psql session holding an advisory lock, so two deployment runners that start
+together do not both apply the same version: the second waits, then finds nothing pending.
+
+## Rolling back
+
+[`rollback.sh`](rollback.sh) rolls applied versions back, newest first, down to the version you name:
+
+```bash
+DATABASE_URL=... migrations/rollback.sh --to 0006          # print what this would roll back, and stop
+DATABASE_URL=... migrations/rollback.sh --to 0006 --yes    # do it
+DATABASE_URL=... migrations/rollback.sh --one --yes        # roll back the newest applied version
+```
+
+It does nothing without `--yes`, because **a down migration is a schema operation, not an undo**: it
+drops what its up file created, and the rows go with it. When the data still matters, recover to the
+restore point taken before the deployment instead — [`docs/data-durability.md`](../../../docs/data-durability.md)
+has that procedure, and [`docs/deployment.md`](../../../docs/deployment.md) has the order to do it in
+relative to rolling the application back.
 
 `schema_migrations` is the ledger: every up file inserts its version, every down file deletes it. Ask
 the database what it has rather than trusting a deployment log:

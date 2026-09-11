@@ -1,61 +1,23 @@
-import { randomUUID } from 'node:crypto';
-import { SleeperClient } from '@sleeper/sleeper-client';
-import { demoEnabled, validateAuthenticationConfig } from './auth.js';
-import { createApp } from './app.js';
-import { demoSnapshot } from './demo.js';
-import { configureProjectionFeed } from './providers/index.js';
-import { configureLeagueSyncWorker, syncWorkerEnabled } from './scheduler/index.js';
-import { createRepository, describeStorage } from './storage/index.js';
-import { LeagueSyncService } from './sync.js';
-import { PlayerDirectoryService } from './players.js';
+import { createRuntime, loadConfiguration, registerShutdown, seed, startHttp, startScheduledWork, type Component } from './runtime.js';
+import { GracefulShutdown } from './shutdown.js';
 
-validateAuthenticationConfig();
-// Storage is named by configuration rather than inferred, and a configuration that cannot hold up —
-// the local JSON adapter behind several instances in production — is refused here rather than
-// discovered when two instances start overwriting each other. See docs/storage.md.
-const { repository: store, configuration: storage } = createRepository();
-console.info(`[storage] ${describeStorage(storage)}`);
-if (storage.defaulted) console.info('[storage] STORAGE_ADAPTER is unset; using the local JSON adapter. Production requires it to be named explicitly.');
-for (const warning of storage.warnings) console.warn(`[storage] ${warning}`);
-const port = Number(process.env.PORT ?? 4000);
-const interval = Number(process.env.SYNC_INTERVAL_MINUTES ?? 30) * 60_000;
-if (process.env.APP_LOGIN_PASSWORD_HASH && !await store.applicationUserByLogin(process.env.APP_LOGIN_USER ?? 'admin')) {
-  await store.saveApplicationUser({ id: randomUUID(), login: process.env.APP_LOGIN_USER ?? 'admin', passwordHash: process.env.APP_LOGIN_PASSWORD_HASH, sleeperLeagueIds: [], createdAt: new Date().toISOString() });
-}
-// The sample league is fiction, so it is seeded once here rather than synchronized: there is nothing
-// upstream to synchronize it against. Production never reaches this line, and the worker never
-// schedules the sample league even if a stored connection for it survives into a production store.
-if (demoEnabled()) { await store.save(demoSnapshot()); console.info('[league-sync] sample league seeded'); }
-
-const sleeper = new SleeperClient();
-const sync = new LeagueSyncService(store, sleeper);
-// One shared directory refreshes at most daily, even when there are no active leagues.
-const players = new PlayerDirectoryService(store, sleeper);
-const refreshPlayers = () => void players.refresh().catch(error => console.error('[players] storage failure', error));
-const playerSweep = syncWorkerEnabled() ? setInterval(refreshPlayers, 60 * 60_000) : undefined;
-if (playerSweep) { playerSweep.unref(); refreshPlayers(); }
 /**
- * Connected leagues are synchronized by the worker, never by an interval in this file and never inside
- * an HTTP request. One instance owns the schedule: `SYNC_WORKER_ENABLED=false` opts an instance out
- * explicitly, and the sweep lease means that even a misconfigured fleet synchronizes each league once.
- * See docs/league-sync.md.
+ * The combined process: the API and the schedule in one.
+ *
+ * This is what `npm run dev` runs and what a single-container deployment runs, and it is the right
+ * shape for an installation with one instance — there is nothing to coordinate, so there is no reason
+ * to run two processes. Scaling past one instance means running `api.ts` on each of them with
+ * `SYNC_WORKER_ENABLED=false` and `worker.ts` once. See docs/deployment.md.
  */
-const worker = configureLeagueSyncWorker(store, sync);
-if (syncWorkerEnabled()) worker.start();
-else console.info('[league-sync] schedule disabled on this instance; another worker or managed job owns it');
 
-// The projection feed is opt-in: without PROJECTION_FEED_ENABLED nothing here starts, and the
-// file-based WAIVER_SIGNALS_PATH adapter continues to serve forecasts exactly as before.
-const projectionFeed = configureProjectionFeed(store);
-projectionFeed?.schedule.start();
-// Sessions that can no longer authenticate anything are swept on the sync cadence as well as at login,
-// so an installation that is running but not being signed into does not accumulate them.
-const sessionSweep = setInterval(() => void store.pruneSessions().catch(error => console.error('[sessions] prune failed', error)), Math.max(interval, 60 * 60_000));
-sessionSweep.unref();
-const server = createApp(store, sleeper, sync, projectionFeed?.store, worker).listen(port, () => console.info(`API listening on http://localhost:${port}`));
-// A stopped worker holds no timer and takes no new leases; the ones it holds expire on their own, so a
-// replacement instance picks the schedule up without waiting for anything to be released by hand.
-for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => {
-  worker.stop(); projectionFeed?.schedule.stop(); clearInterval(sessionSweep); clearInterval(playerSweep);
-  server.close(() => process.exit(0));
-});
+const configuration = loadConfiguration();
+const runtime = createRuntime(configuration);
+await seed(runtime);
+
+// HTTP stops first so the load balancer sees a draining instance before the clocks stop; the schedule
+// is stopped in the same phase, and only then is anything waited for.
+const { component: http } = startHttp(runtime);
+const scheduled = startScheduledWork(runtime);
+const components: Component[] = scheduled ? [http, scheduled] : [http];
+const shutdown = registerShutdown(new GracefulShutdown({ graceMs: configuration.shutdownGraceMs }), components, runtime);
+shutdown.listen();

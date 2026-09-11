@@ -96,8 +96,11 @@ you just restored into.
 
 ## Migration rollback
 
-Every migration has a `down` file, and they are applied in reverse order, one version at a time. See
-[`apps/api/migrations/README.md`](../apps/api/migrations/README.md) for the mechanics.
+Every migration has a `down` file, and they are applied in reverse order, one version at a time.
+[`apps/api/migrations/rollback.sh`](../apps/api/migrations/rollback.sh) does that from the ledger and
+does nothing without `--yes`; see [`apps/api/migrations/README.md`](../apps/api/migrations/README.md)
+for the mechanics and [`docs/deployment.md`](deployment.md) for the order to roll the application and
+the schema back in.
 
 **A rollback that drops a table destroys data the `up` cannot recreate.** So:
 

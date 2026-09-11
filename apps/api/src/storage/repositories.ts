@@ -239,4 +239,14 @@ export interface HuddleRepository extends
   LeagueReadRepository, SnapshotWriteRepository {
   /** Which adapter this is, for logs, `/health`, and the multi-instance refusal. */
   readonly adapter: RepositoryAdapter;
+  /**
+   * Releases whatever the adapter is holding open, once nothing is going to use it again.
+   *
+   * Optional, because an adapter that holds nothing has nothing to close. The JSON adapter waits for
+   * its queued writes to reach the file — a process killed between the temporary file and the rename
+   * loses that write entirely — and a pooled adapter ends its pool here rather than leaving PostgreSQL
+   * holding connections for a process that has gone. It is called last in the shutdown sequence; a
+   * repository method called after it may fail.
+   */
+  close?(): Promise<void>;
 }

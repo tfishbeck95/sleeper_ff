@@ -1,6 +1,11 @@
 node_modules/
 dist/
+# Every local environment file, at any depth: the root `.env` and `deploy/.env*` all carry credentials.
+# The examples are the documentation and are tracked.
 .env
+.env.*
+!.env.example
+!.env.staging.example
 *.log
 data/*.json
 !data/.gitkeep

@@ -1,0 +1,65 @@
+# Staging: the same stack, sharing nothing with production.
+#
+#   cd deploy && cp .env.staging.example .env.staging && $EDITOR .env.staging
+#   docker compose --env-file .env.staging -f compose.yaml -f compose.staging.yaml up --build
+#
+# `COMPOSE_PROJECT_NAME=huddle-staging` in that env file is what separates the volumes, the network and
+# the container names, so the two stacks can run side by side on one machine and staging cannot reach
+# production's database by accident. The ports below are shifted for the same reason.
+#
+# What must be different, and why:
+#
+# - **A separate database.** Not a schema in production's server: a rollback rehearsal on staging drops
+#   tables, and a `DATABASE_URL` that differs only by a search path is one typo away from dropping
+#   production's. Separate credentials too, so staging's cannot open production's if they leak.
+# - **A separate application login.** Staging's password hash is not production's. It is the same
+#   credential class — the one that opens every league the account links — and sharing it means a
+#   staging compromise is a production compromise.
+# - **Separate league connections.** Link a Sleeper league created for testing rather than the one a
+#   real season depends on. Sleeper is a free shared API and every connected league is up to seven calls
+#   a sweep, so a staging installation pointed at production's leagues doubles the upstream load for a
+#   season nobody is playing; and staging runs unreleased synchronization code, which is precisely the
+#   code you do not want writing the snapshot someone sets a lineup from.
+# - **No forecast credential.** Staging does not spend a licensed subscription's quota. It runs on the
+#   file-based `WAIVER_SIGNALS_PATH` adapter, or with forecasts reported unavailable, which is a state
+#   the dashboard has to render correctly anyway.
+
+services:
+  postgres:
+    # A volume of its own, under this project's name. Nothing here ever restores a production dump: a
+    # staging database holding production's accounts and sessions is a production database with weaker
+    # access controls and unreleased code pointed at it.
+    volumes:
+      - staging-postgres-data:/var/lib/postgresql/data
+
+  api:
+    environment:
+      # Staging's own origin. A session cookie only travels to the origin named here, so this is also
+      # what keeps a staging dashboard from being able to use a production session.
+      WEB_ORIGIN: "${WEB_ORIGIN:?set WEB_ORIGIN to the staging dashboard origin}"
+      PROJECTION_FEED_ENABLED: "false"
+
+  worker:
+    environment:
+      # Distinct in the lease table and in the logs, so a sweep is always attributable to one
+      # environment.
+      SYNC_WORKER_ID: huddle-staging-worker
+      # Staging is not a load test of someone else's free API. One league at a time, swept hourly.
+      SYNC_CONCURRENCY: "1"
+      SYNC_INTERVAL_MINUTES: "60"
+      PROJECTION_FEED_ENABLED: "false"
+      SPORTSDATAIO_API_KEY: ""
+
+# The migration job needs nothing overridden: it takes DATABASE_URL from the environment file, which
+# points at staging's own database. This is where a rollback is rehearsed before it is run anywhere that
+# matters:
+#
+#   docker compose --env-file .env.staging -f compose.yaml -f compose.staging.yaml \
+#     run --rm --entrypoint /migrations/rollback.sh migrate --to 0006 --yes
+#
+# The published ports come from API_PORT and WEB_PORT in .env.staging rather than from an override here,
+# because Compose appends port lists across files instead of replacing them — an override would publish
+# both, and staging would take production's port on the same machine.
+
+volumes:
+  staging-postgres-data:

@@ -1,0 +1,243 @@
+# What has to be true before a commit is deployable.
+#
+# The jobs are separate on purpose. A failing audit and a failing test are different problems with
+# different owners and different urgencies, and a single job that does everything reports only the first
+# one it hits — so a run tells you the state of one thing rather than the state of the commit.
+#
+# Nothing here publishes. The image jobs build and inspect, and a deployment is a separate, deliberate
+# act: see docs/deployment.md.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only. No job needs to write to the repository, and the token cannot be misused for what it was
+# never granted.
+permissions:
+  contents: read
+
+# A new push supersedes the run in progress for the same ref. `main` is exempt: its runs are the record
+# of what was on the branch, and cancelling one leaves a commit with no verdict.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # --- Type check, test, build ------------------------------------------------------------------
+  verify:
+    name: Type check, test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # `npm ci` rather than `npm install`: it installs exactly what the lockfile says and fails when
+      # the lockfile and the manifests disagree, so CI cannot pass against a dependency tree that no
+      # deployment will ever have.
+      - name: Install from the lockfile
+        run: npm ci
+
+      - name: Type check every workspace
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # Last, because it is the step that proves the thing being deployed can be produced at all — and
+      # because it is the one that catches a package whose `dist` the compiled API would import.
+      - name: Build every workspace
+        run: npm run build
+
+      - name: Check the migration set is well formed
+        run: npm run migrations:check -w @sleeper/api
+
+  # --- The schema, against a real PostgreSQL ----------------------------------------------------
+  # The migrations are SQL. A lint over the files can say they are paired and numbered; only a database
+  # can say they apply, refuse what they must, roll back, and apply again — which is the property that
+  # makes a deployment's migration step safe to run.
+  schema:
+    name: Schema applies, refuses, rolls back and re-applies
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: huddle
+          POSTGRES_PASSWORD: huddle
+          POSTGRES_DB: huddle_verify
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U huddle -d huddle_verify"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://huddle:huddle@127.0.0.1:5432/huddle_verify
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y postgresql-client
+
+      # The deployment step itself, run against an empty database: it reports everything as pending,
+      # applies it, and then reports nothing pending on a second run.
+      - name: Apply, and prove a re-run applies nothing
+        working-directory: apps/api
+        run: |
+          migrations/apply.sh --status
+          migrations/apply.sh
+          migrations/apply.sh | tee second-run.txt
+          grep -q 'up to date' second-run.txt
+
+      - name: Roll back to a version and apply forward again
+        working-directory: apps/api
+        run: |
+          migrations/rollback.sh --to 0006 --yes
+          migrations/apply.sh
+
+      # The schema exercise: a realistic dataset, one statement per constraint that must be refused, the
+      # leases, the transactional replacement and the retention rules, then a full rollback and re-apply.
+      - name: Exercise the schema
+        working-directory: apps/api
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+          migrations/verify/run.sh
+
+  # --- Secrets ----------------------------------------------------------------------------------
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A secret is compromised from the commit that introduced it, not from the one that removed
+          # it, so the scan needs the history rather than the tip.
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.28.0
+        run: |
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Scan the history
+        run: gitleaks detect --source . --redact --verbose --exit-code 1
+
+      # The specific mistake this repository has to not make: a local environment file or the retained
+      # forecast data committed, either of which would then be in every build context and every image.
+      - name: No environment file or licensed data is tracked
+        run: |
+          tracked=$(git ls-files | grep -E '(^|/)\.env($|\.)' | grep -v '\.example$' || true)
+          if [ -n "$tracked" ]; then echo "tracked environment files:"; echo "$tracked"; exit 1; fi
+          tracked=$(git ls-files 'data/*.json' | grep -v '\.gitkeep' || true)
+          if [ -n "$tracked" ]; then echo "tracked forecast/store data:"; echo "$tracked"; exit 1; fi
+
+  # --- Dependencies -------------------------------------------------------------------------------
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # The production tree is what ships, and it is small: express, cors, and the workspace packages.
+      # A high or critical advisory in it blocks the build.
+      - name: Audit what ships
+        run: npm audit --omit=dev --audit-level=high
+
+      # The development tree is reported, not enforced. An advisory in a bundler or a test runner is
+      # worth knowing about and is not a reason to stop a release: it is not in the image, and a build
+      # that goes red on someone else's transitive advisory teaches people to ignore the signal.
+      - name: Audit the development tree
+        continue-on-error: true
+        run: npm audit --audit-level=moderate
+
+  # --- Images -------------------------------------------------------------------------------------
+  images:
+    name: Images build, and carry nothing they should not
+    runs-on: ubuntu-latest
+    needs: [verify]
+    steps:
+      - uses: actions/checkout@v4
+
+      # A local environment file and a retained feed, present in the working tree exactly as they would
+      # be on a developer's machine. If `.dockerignore` stops doing its job, the assertions below fail.
+      - name: Put the files that must never reach an image in the build context
+        run: |
+          printf 'APP_LOGIN_PASSWORD_HASH=scrypt:dead:beef\nSPORTSDATAIO_API_KEY=not-a-real-key\n' > .env
+          mkdir -p data
+          printf '{"season":"2026","week":1,"players":[]}\n' > data/projection-feed.json
+
+      - name: Build the API image
+        run: docker build -f deploy/api.Dockerfile -t huddle-api:ci .
+
+      - name: Build the migration image
+        run: docker build -f deploy/migrate.Dockerfile -t huddle-migrate:ci .
+
+      - name: Build the web image
+        run: docker build -f deploy/web.Dockerfile -t huddle-web:ci .
+
+      # Asserted against the built artifact rather than against `.dockerignore`, because the image is
+      # what gets pushed — and because a file copied into any layer stays in the image even when a later
+      # layer removes it. The paths searched are every path these Dockerfiles copy into, which is where
+      # a mistaken `COPY . .` would land what the steps above just planted.
+      - name: No environment file or licensed data reached the images
+        run: |
+          forbidden() {
+            docker run --rm --entrypoint sh --user 0 "$1" -c \
+              "find $2 -name '.env' -o -name '.env.*' -o -name 'projection-feed*.json' -o -name '*waiver-signals*.json'" \
+              2>/dev/null | grep -v '\.example$' || true
+          }
+          fail=0
+          for pair in "huddle-api:ci|/app" "huddle-migrate:ci|/migrations" "huddle-web:ci|/usr/share/nginx/html /etc/nginx"; do
+            image=${pair%%|*}
+            found=$(forbidden "$image" "${pair#*|}")
+            if [ -n "$found" ]; then echo "$image carries files it must not:"; echo "$found"; fail=1; fi
+          done
+          exit $fail
+
+      # The compiler, the test runner and the source are build-stage concerns. Finding them in the
+      # runtime image means a stage boundary moved.
+      - name: The API image runs generated JavaScript, as an unprivileged user
+        run: |
+          docker run --rm --entrypoint sh huddle-api:ci -c 'test -f dist/api.js && test -f dist/worker.js && test -f dist/index.js'
+          docker run --rm --entrypoint sh huddle-api:ci -c '! ls /app/node_modules/typescript /app/node_modules/tsx /app/node_modules/vite 2>/dev/null'
+          # The shipped application code is JavaScript: no TypeScript source travels with it, and there
+          # is nothing in the image that could compile any. Declaration files are not source — the
+          # workspace packages emit them next to their JavaScript — so they are excluded.
+          docker run --rm --entrypoint sh huddle-api:ci -c '! find /app/apps/api/dist /app/packages -name "*.ts" ! -name "*.d.ts" | grep .'
+          test "$(docker run --rm --entrypoint id huddle-api:ci -u)" != "0"
+
+      # The refusals are the product: an image that starts without a named storage adapter, or with a
+      # plain-http origin in production, is an image that would have started wrong in production.
+      - name: The image refuses an incomplete configuration
+        run: |
+          ! docker run --rm -e WEB_ORIGIN=https://huddle.example.com -e APP_LOGIN_PASSWORD_HASH=scrypt:ab:cd huddle-api:ci
+          docker run --rm -e WEB_ORIGIN=https://huddle.example.com -e APP_LOGIN_PASSWORD_HASH=scrypt:ab:cd huddle-api:ci 2>&1 \
+            | grep -q 'STORAGE_ADAPTER'
+
+      - name: The compose stack is valid
+        working-directory: deploy
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=ci/; s|^APP_LOGIN_PASSWORD_HASH=$|APP_LOGIN_PASSWORD_HASH=scrypt:ab12:cd34|' .env
+          docker compose -f compose.yaml config --quiet
+          cp .env.staging.example .env.staging
+          sed -i 's/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=ci/; s|^APP_LOGIN_PASSWORD_HASH=$|APP_LOGIN_PASSWORD_HASH=scrypt:ab12:cd34|' .env.staging
+          docker compose --env-file .env.staging -f compose.yaml -f compose.staging.yaml config --quiet
