@@ -1,4 +1,4 @@
-import { createRuntime, loadConfiguration, registerShutdown, seed, startHttp } from './runtime.js';
+import { createRuntime, loadConfiguration, registerShutdown, seed, startHttp, startObservability, type Component } from './runtime.js';
 import { GracefulShutdown } from './shutdown.js';
 import { logger } from './log.js';
 
@@ -22,5 +22,7 @@ if (configuration.sync.workerEnabled) {
 
 await seed(runtime);
 const { component } = startHttp(runtime);
-const shutdown = registerShutdown(new GracefulShutdown({ graceMs: configuration.shutdownGraceMs }), [component], runtime);
+const observability = startObservability(runtime);
+const components: Component[] = observability ? [component, observability] : [component];
+const shutdown = registerShutdown(new GracefulShutdown({ graceMs: configuration.shutdownGraceMs }), components, runtime);
 shutdown.listen();

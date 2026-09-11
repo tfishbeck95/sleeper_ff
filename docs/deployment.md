@@ -173,10 +173,15 @@ not the caller's 4xx: Sleeper answering 400 or 403 means *we* built a bad reques
 The exceptions are its 404, which genuinely means the league or user the caller named does not exist,
 and its 429, which is a 503 with `Retry-After` because the caller is not over any budget of theirs.
 
-**`/health` is public and says one field.** Not the version, the environment, the storage adapter,
-the worker's identity, whether an upstream is reachable, or any path — an orchestrator needs none of
-them to decide whether to keep routing here, and everything else would be published to whoever asks.
-The worker's own probe on `WORKER_HEALTH_PORT` answers the same way.
+**The probes are three different questions.** `/health/live` asks whether the process can answer at
+all; it consults nothing and stays 200 while draining, because a liveness probe that fails during a
+graceful shutdown is an orchestrator killing the shutdown it asked for, and one that fails on a
+database blip turns one outage into a fleet-wide restart loop. `/health/ready` asks whether to send
+this instance traffic; that is where storage and draining belong. `/health` is kept as readiness, so
+an existing load balancer configuration does not move. Both are public and say one word plus which
+check failed — never the version, the adapter, the worker's identity, an upstream's name or any
+path. The internal picture lives behind authentication at `GET /api/ops/status` and on `/metrics`;
+see the [runbook](runbook.md).
 
 **Logs are one JSON object per line, redacted on the way out.** Four classes of value never reach one,
 and each of them gets there by accident rather than on purpose: session ids and CSRF tokens (and
@@ -184,6 +189,35 @@ their digests, which authenticate just as well), the forecast subscription key, 
 paths — `ENOENT ... open '/var/lib/huddle/store.json'` is the deployment's layout, published — and
 personal settings, where an account appears as a stable digest rather than as a login. `LOG_LEVEL`
 sets the floor; `silent` turns a process's own logging off.
+
+## Metrics, probes and alerts
+
+`METRICS_PORT` binds a second listener serving `/metrics`, `/health/live` and `/health/ready`. It is
+off unless a port is named, and it is **not** the application port on purpose: a scrape describes the
+deployment — route names, traffic volumes, error rates, how many leagues are connected — which is not
+a credential and is also not something to hand to whoever asks. Put it on an internal network or a
+sidecar rather than behind a token that ends up in a scrape configuration in a repository somewhere.
+
+| Published | Why it is worth having |
+| --- | --- |
+| Requests, latency and status by **route pattern** | The label is `/api/dashboard/:leagueId`, never the path. Cardinality is fixed by the route table rather than by how many leagues exist. |
+| Authentication failures by reason, rate-limit events by budget and dimension | `reuse_detected` rising means a session is being replayed; an `address` scope exhausting is a flood and a `session` scope is one client in a loop. Those need different actions. |
+| Sleeper calls, retries, timeouts and failures by endpoint and category | Retries are counted rather than inferred: a call that succeeded on its third attempt is a success *and* two retries, and a graph that only sees the success cannot tell a healthy upstream from one failing two in three. |
+| Sync duration, last success, stale and failing leagues | Aggregates, not per-league series. No alert is improved by knowing which of four hundred leagues is oldest; the runbook says how to find it. |
+| Forecast age, source timestamp, player count, identity-match rate, coverage | The source timestamp is the only thing that catches a source which stopped publishing while still answering 200. |
+| Recommendation readiness and **why** advice was withheld | Refusing to rank is designed behaviour, so the reason is the only operational signal there is. |
+| Storage query latency and failures by operation; pool utilization | Timed at the repository seam, so the numbers exist for the JSON adapter today and for PostgreSQL the day it lands. The pool series are *absent* rather than zero when there is no pool. |
+| Worker sweep lag, queue depth, jobs in flight, lock contention | Lag is what separates "the worker is running" from "the worker is keeping up" — a worker stuck behind a slow upstream answers its probe perfectly. Sweep-lease contention means a second worker is running that `SYNC_WORKER_ENABLED=false` should have opted out. |
+
+**Alerting comes in two forms, and you want exactly one of them.** An installation with Prometheus
+should scrape `/metrics` and load [`deploy/alerts/huddle.rules.yml`](../deploy/alerts/huddle.rules.yml),
+which expresses the conditions with proper windows and `for` durations. An installation without one
+gets the built-in evaluator, which runs **on the worker** — the conditions are about the installation,
+and evaluating them once per API instance would mean one page per instance for one problem. Six
+conditions: stale scoring, stale projections, repeated sync failures, worker inactivity, an elevated
+5xx rate, and storage failures. Each carries the anchor of its own section in the
+[runbook](runbook.md), because an alert with no action is a notification and notifications train
+people to close alerts without reading them.
 
 ## The web build
 

@@ -1,8 +1,7 @@
-import { createServer } from 'node:http';
 import { createRuntime, loadConfiguration, registerShutdown, startScheduledWork, type Component } from './runtime.js';
-import { closeHttpServer, GracefulShutdown } from './shutdown.js';
-import { isDraining } from './lifecycle.js';
+import { GracefulShutdown } from './shutdown.js';
 import { logger } from './log.js';
+import { startObservabilityServer } from './observability/server.js';
 
 /**
  * The worker process.
@@ -30,27 +29,23 @@ const scheduled = startScheduledWork(runtime);
 const components: Component[] = scheduled ? [scheduled] : [];
 
 /**
- * A liveness probe, when one is asked for.
+ * The probes and the scrape, when a port is named for them.
  *
- * The worker binds no port of its own, which leaves an orchestrator with nothing to ask. This is the
- * smallest thing that answers: it reports that the process is up and whether it has begun draining. It
- * is off unless `WORKER_HEALTH_PORT` names a port, so a worker on a host that already has something on
- * that port is not forced to take it.
+ * The worker binds no application port, which leaves an orchestrator with nothing to ask. This gives
+ * it the same two answers the API gives — `/health/live` for "is the process responsive" and
+ * `/health/ready` for "is its storage there" — and `/metrics` alongside them.
  *
- * The answer is the status and nothing else. It used to name the lease holder, which defaults to
- * `host:pid:random` — the container's hostname and process id, published by an endpoint that has no
- * authentication in front of it. Which worker holds the schedule is a question for the logs and the
- * lease table, where it is already answered; a probe only has to say whether to keep routing here.
+ * They say the status and nothing else. The probe used to name the lease holder, which defaults to
+ * `host:pid:random` — the container's hostname and process id, published by an endpoint with no
+ * authentication in front of it. Which worker owns the schedule is a question for the logs and the
+ * lease table, where it is already answered.
+ *
+ * `WORKER_HEALTH_PORT` and `METRICS_PORT` are both honoured, and one server serves whichever is
+ * named: a deployment that already points a healthcheck at the first does not have to move it.
  */
-if (configuration.workerHealthPort) {
-  const probe = createServer((request, response) => {
-    if (request.url !== '/health') { response.writeHead(404).end(); return; }
-    const draining = isDraining();
-    response.writeHead(draining ? 503 : 200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
-      .end(JSON.stringify({ status: draining ? 'shutting-down' : 'ok' }));
-  });
-  probe.listen(configuration.workerHealthPort, () => logger.info({ component: 'worker', port: configuration.workerHealthPort }, 'health probe listening'));
-  components.push({ stop: () => closeHttpServer(probe, configuration.shutdownGraceMs), drain: () => undefined });
+const observabilityPort = configuration.metricsPort ?? configuration.workerHealthPort;
+if (observabilityPort) {
+  components.push(startObservabilityServer({ port: observabilityPort, readinessSource: runtime.store, log: logger }).component);
 }
 
 logger.info({ component: 'worker', owner: runtime.worker.owner }, 'schedule owned');

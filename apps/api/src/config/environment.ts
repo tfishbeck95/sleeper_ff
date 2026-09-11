@@ -72,6 +72,16 @@ export interface RuntimeConfiguration {
   projectionFeed: ProjectionFeedConfiguration;
   /** The worker's liveness probe, when one is asked for. Unset means it binds nothing. */
   workerHealthPort?: number;
+  /**
+   * The port `/metrics` and the probes are served on, when one is asked for.
+   *
+   * Separate from the application port because a scrape is an operational disclosure — route names,
+   * traffic volumes, error rates, how many leagues are connected — and belongs on an internal
+   * network rather than behind a token in somebody's scrape configuration. Unset binds nothing.
+   */
+  metricsPort?: number;
+  /** How often the worker evaluates the alert conditions. */
+  alertIntervalMs: number;
   /** How long shutdown waits for in-flight work before the process exits anyway. */
   shutdownGraceMs: number;
   demoEnabled: boolean;
@@ -231,6 +241,20 @@ export function validateEnvironment(env: NodeJS.ProcessEnv = process.env, { serv
   // gives it a liveness probe; leaving it unset binds nothing.
   const workerHealthPort = env.WORKER_HEALTH_PORT?.trim() ? found.number(env, 'WORKER_HEALTH_PORT', 0, { min: 1, max: 65_535, integer: true }) : undefined;
   if (workerHealthPort !== undefined && workerHealthPort === port) found.add(`WORKER_HEALTH_PORT and PORT are both ${port}. They are different processes; only one of them can bind it.`);
+  const metricsPort = env.METRICS_PORT?.trim() ? found.number(env, 'METRICS_PORT', 0, { min: 1, max: 65_535, integer: true }) : undefined;
+  // Both are bound by the same process in a single-instance deployment, and a collision there is a
+  // port that silently serves whichever listener won rather than an error anybody sees.
+  if (metricsPort !== undefined && metricsPort === port) found.add(`METRICS_PORT and PORT are both ${port}. The application and the metrics endpoint are separate listeners; only one of them can bind it.`);
+  if (metricsPort !== undefined && workerHealthPort !== undefined && metricsPort === workerHealthPort) found.add(`METRICS_PORT and WORKER_HEALTH_PORT are both ${metricsPort}.`);
+  const alertIntervalMs = found.number(env, 'OPS_ALERT_INTERVAL_MINUTES', 5, { min: 1, unit: MINUTE });
+  found.number(env, 'OPS_ALERT_REPEAT_MINUTES', 60, { min: 1 });
+  const opsWebhook = env.OPS_ALERT_WEBHOOK?.trim();
+  if (opsWebhook) {
+    let url: URL | undefined;
+    try { url = new URL(opsWebhook); } catch { found.add('OPS_ALERT_WEBHOOK must be an absolute https URL.'); }
+    // An alert names which part of the installation is unwell; it is not sent over plain http.
+    if (url && url.protocol !== 'https:') found.add('OPS_ALERT_WEBHOOK must use https.');
+  }
 
   // --- Forecast sources and their credentials ---
   const projectionFeed = validateProjectionFeed(env, found);
@@ -250,7 +274,7 @@ export function validateEnvironment(env: NodeJS.ProcessEnv = process.env, { serv
   return {
     mode, production, port, webOrigins: origins, trustProxy, upstream, storage, session,
     sync: { workerEnabled, intervalMs, concurrency, leaseTtlMs },
-    projectionFeed, workerHealthPort, shutdownGraceMs, demoEnabled, warnings: found.warnings,
+    projectionFeed, workerHealthPort, metricsPort, alertIntervalMs, shutdownGraceMs, demoEnabled, warnings: found.warnings,
   };
 }
 
@@ -369,6 +393,7 @@ export function describeEnvironment(configuration: RuntimeConfiguration): string
     `sync-interval=${configuration.sync.intervalMs / MINUTE}m`,
     `forecast-feed=${configuration.projectionFeed.enabled ? 'enabled' : 'off'}`,
   ];
+  if (configuration.metricsPort) parts.push(`metrics=:${configuration.metricsPort}`);
   if (configuration.demoEnabled) parts.push('demo=enabled');
   return parts.join(', ');
 }

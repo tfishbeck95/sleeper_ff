@@ -3,6 +3,7 @@ import type { DerivationNote } from './derivation.js';
 import type { IdentityResolution } from './identity.js';
 import type { FeedProvenance, UnresolvedIdentity } from './provider.js';
 import { logger } from '../log.js';
+import { forecastBreaches, forecastIngestions } from '../observability/instruments.js';
 
 /**
  * What one ingestion did, and whether it was good enough to rely on.
@@ -191,6 +192,21 @@ export class WebhookAlerter implements Alerter {
 }
 
 /** Fans out to several destinations; one failing destination never suppresses the others. */
+/**
+ * Records what an ingestion run produced, alongside whatever alerting it triggers.
+ *
+ * Counted at the point the run is judged rather than at the point it is delivered, so a webhook that
+ * is unreachable costs an alert and never a metric.
+ */
+export class MeteredAlerter implements Alerter {
+  constructor(private readonly inner: Alerter) {}
+  async alert(event: AlertEvent) {
+    forecastIngestions.inc({ status: event.status });
+    for (const breach of event.breaches) forecastBreaches.inc({ kind: breach.kind, severity: breach.severity });
+    await this.inner.alert(event);
+  }
+}
+
 export class CompositeAlerter implements Alerter {
   constructor(private readonly alerters: Alerter[]) {}
   async alert(event: AlertEvent) { await Promise.allSettled(this.alerters.map(async alerter => alerter.alert(event))); }

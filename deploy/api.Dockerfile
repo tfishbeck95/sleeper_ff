@@ -101,9 +101,11 @@ WORKDIR /app/apps/api
 USER node
 EXPOSE 4000
 
-# A draining instance answers 503 here, which is how an orchestrator learns to stop routing to it
-# before the listener closes. Override the port for the worker, which serves its probe elsewhere.
+# Liveness, not readiness. This check decides whether to *replace* the container, so it must not
+# fail because a database is briefly unreachable — that turns one outage into a restart loop — and it
+# must not fail while the process is draining, which is the process doing what it was asked. The load
+# balancer asks `/health/ready` instead, which is the check that answers both of those with a 503.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "dist/api.js"]

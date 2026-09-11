@@ -19,6 +19,24 @@ export class SleeperApiError extends Error {
    */
   constructor(public readonly status: number, message: string, public readonly category: SleeperErrorCategory, public readonly retryable = false, public readonly retryAfterMs: number | null = null) { super(message); this.name = 'SleeperApiError'; }
 }
+/**
+ * What one call did, reported to whoever is counting.
+ *
+ * The seam exists so this package stays a client: it knows about HTTP and about Sleeper's shapes,
+ * and nothing about registries, label cardinality or what an operator wants on a dashboard. The API
+ * supplies an observer that turns these into metrics; a test supplies one that collects them.
+ */
+export interface SleeperCallObservation {
+  /** The method that was called — `rosters`, `matchups` — not the path, which carries ids. */
+  endpoint: string;
+  outcome: 'success' | 'failure';
+  /** Attempts made, the first one included. Greater than one means the call was retried. */
+  attempts: number;
+  durationMs: number;
+  category?: SleeperErrorCategory;
+  status?: number;
+}
+
 export interface SleeperClientOptions {
   timeoutMs?: number;
   maxRetries?: number;
@@ -34,6 +52,8 @@ export interface SleeperClientOptions {
    * another attempt, and the last failure is thrown as it stands.
    */
   maxElapsedMs?: number;
+  /** Called once per call, whatever the outcome. Never throws into the caller's path. */
+  observe?: (observation: SleeperCallObservation) => void;
 }
 
 /**
@@ -55,11 +75,16 @@ const hasId = (key: string) => (value: unknown) => object(value) && typeof value
 const arrayOf = (guard: (value: unknown) => boolean) => (value: unknown) => Array.isArray(value) && value.every(guard);
 
 export class SleeperClient {
-  private readonly options: Required<SleeperClientOptions>;
+  private readonly options: Required<Omit<SleeperClientOptions, 'observe'>>;
+  private readonly observe: (observation: SleeperCallObservation) => void;
   constructor(private readonly fetcher: typeof fetch = fetch, private readonly baseUrl = BASE_URL, options: SleeperClientOptions = {}) {
     this.options = { timeoutMs: options.timeoutMs ?? 10_000, maxRetries: options.maxRetries ?? 2, backoffMs: options.backoffMs ?? 200, maxRetryAfterMs: options.maxRetryAfterMs ?? 5_000, maxElapsedMs: options.maxElapsedMs ?? 20_000 };
+    // An observer that throws must not become a failed Sleeper call: measuring something is never
+    // allowed to break the thing being measured.
+    const observer = options.observe;
+    this.observe = observer ? observation => { try { observer(observation); } catch { /* measurement is not the call */ } } : () => {};
   }
-  private async get<T>(path: string, validate: (value: unknown) => boolean): Promise<T> {
+  private async get<T>(endpoint: string, path: string, validate: (value: unknown) => boolean): Promise<T> {
     const startedAt = Date.now();
     for (let attempt = 0; ; attempt += 1) {
       // Each attempt gets whatever is left of the whole-call budget, so a chain of slow answers
@@ -75,30 +100,35 @@ export class SleeperClient {
         }
         const value: unknown = await response.json();
         if (!validate(value)) throw new SleeperApiError(502, `Invalid Sleeper response for ${path}`, 'validation');
+        this.observe({ endpoint, outcome: 'success', attempts: attempt + 1, durationMs: Date.now() - startedAt });
         return value as T;
       } catch (error) {
         const normalized = error instanceof SleeperApiError ? error : new SleeperApiError(503, error instanceof Error ? error.message : 'Sleeper API is unavailable', error instanceof DOMException && error.name === 'TimeoutError' ? 'timeout' : 'network', true);
-        if (!normalized.retryable || attempt >= this.options.maxRetries) throw normalized;
+        if (!normalized.retryable || attempt >= this.options.maxRetries) {
+          this.observe({ endpoint, outcome: 'failure', attempts: attempt + 1, durationMs: Date.now() - startedAt, category: normalized.category, status: normalized.status });
+          throw normalized;
+        }
         // A caller is waiting on this request. Upstream's own delay is honoured while it stays inside
         // the in-request budget; a longer one is handed back on the error for the worker to schedule,
         // because holding a request open for a minute is worse than answering from the last snapshot.
         const wait = normalized.retryAfterMs ?? this.options.backoffMs * 2 ** attempt;
-        if (wait > this.options.maxRetryAfterMs) throw normalized;
+        const giveUp = () => { this.observe({ endpoint, outcome: 'failure', attempts: attempt + 1, durationMs: Date.now() - startedAt, category: normalized.category, status: normalized.status }); return normalized; };
+        if (wait > this.options.maxRetryAfterMs) throw giveUp();
         // Waiting past the deadline to start an attempt that would be aborted immediately is worse
         // than failing now: the caller waits the whole remainder to learn what is already known.
-        if (Date.now() - startedAt + wait >= this.options.maxElapsedMs) throw normalized;
+        if (Date.now() - startedAt + wait >= this.options.maxElapsedMs) throw giveUp();
         await new Promise(resolve => setTimeout(resolve, wait));
       }
     }
   }
-  user(username: string) { return this.get<SleeperUser | null>(`/user/${encodeURIComponent(username.trim())}`, value => value === null || hasId('user_id')(value)); }
-  leagues(userId: string, season: string | number) { return this.get<SleeperLeague[]>(`/user/${encodeURIComponent(userId)}/leagues/nfl/${encodeURIComponent(String(season))}`, arrayOf(hasId('league_id'))); }
-  league(leagueId: string) { return this.get<SleeperLeague>(`/league/${encodeURIComponent(leagueId)}`, hasId('league_id')); }
-  rosters(leagueId: string) { return this.get<SleeperRoster[]>(`/league/${encodeURIComponent(leagueId)}/rosters`, arrayOf(value => object(value) && typeof value.roster_id === 'number')); }
-  leagueUsers(leagueId: string) { return this.get<SleeperLeagueUser[]>(`/league/${encodeURIComponent(leagueId)}/users`, arrayOf(hasId('user_id'))); }
-  matchups(leagueId: string, week: number) { return this.get<SleeperMatchup[]>(`/league/${encodeURIComponent(leagueId)}/matchups/${week}`, arrayOf(value => object(value) && typeof value.roster_id === 'number')); }
-  transactions(leagueId: string, round: number) { return this.get<SleeperTransaction[]>(`/league/${encodeURIComponent(leagueId)}/transactions/${round}`, arrayOf(hasId('transaction_id'))); }
-  drafts(leagueId: string) { return this.get<SleeperDraft[]>(`/league/${encodeURIComponent(leagueId)}/drafts`, arrayOf(hasId('draft_id'))); }
-  tradedPicks(leagueId: string) { return this.get<SleeperDraftPick[]>(`/league/${encodeURIComponent(leagueId)}/traded_picks`, arrayOf(value => object(value) && typeof value.roster_id === 'number')); }
-  players() { return this.get<Record<string, SleeperPlayer>>('/players/nfl', value => object(value) && Object.values(value).every(player => object(player))); }
+  user(username: string) { return this.get<SleeperUser | null>('user', `/user/${encodeURIComponent(username.trim())}`, value => value === null || hasId('user_id')(value)); }
+  leagues(userId: string, season: string | number) { return this.get<SleeperLeague[]>('leagues', `/user/${encodeURIComponent(userId)}/leagues/nfl/${encodeURIComponent(String(season))}`, arrayOf(hasId('league_id'))); }
+  league(leagueId: string) { return this.get<SleeperLeague>('league', `/league/${encodeURIComponent(leagueId)}`, hasId('league_id')); }
+  rosters(leagueId: string) { return this.get<SleeperRoster[]>('rosters', `/league/${encodeURIComponent(leagueId)}/rosters`, arrayOf(value => object(value) && typeof value.roster_id === 'number')); }
+  leagueUsers(leagueId: string) { return this.get<SleeperLeagueUser[]>('leagueUsers', `/league/${encodeURIComponent(leagueId)}/users`, arrayOf(hasId('user_id'))); }
+  matchups(leagueId: string, week: number) { return this.get<SleeperMatchup[]>('matchups', `/league/${encodeURIComponent(leagueId)}/matchups/${week}`, arrayOf(value => object(value) && typeof value.roster_id === 'number')); }
+  transactions(leagueId: string, round: number) { return this.get<SleeperTransaction[]>('transactions', `/league/${encodeURIComponent(leagueId)}/transactions/${round}`, arrayOf(hasId('transaction_id'))); }
+  drafts(leagueId: string) { return this.get<SleeperDraft[]>('drafts', `/league/${encodeURIComponent(leagueId)}/drafts`, arrayOf(hasId('draft_id'))); }
+  tradedPicks(leagueId: string) { return this.get<SleeperDraftPick[]>('tradedPicks', `/league/${encodeURIComponent(leagueId)}/traded_picks`, arrayOf(value => object(value) && typeof value.roster_id === 'number')); }
+  players() { return this.get<Record<string, SleeperPlayer>>('players', '/players/nfl', value => object(value) && Object.values(value).every(player => object(player))); }
 }

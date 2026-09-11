@@ -24,6 +24,7 @@ import { webOrigins } from './config/origins.js';
 import { sleeperClient } from './config/upstream.js';
 import { trustProxySetting } from './config/proxy.js';
 import { isDraining } from './lifecycle.js';
+import { dependencyStatus, liveness, readiness } from './observability/health.js';
 import { logger as processLogger, type Logger } from './log.js';
 import { BODY_LIMITS, guardBody, jsonBody } from './http/body.js';
 import { neverStored, noStore, privateRevalidated, publicCached } from './http/cache.js';
@@ -175,6 +176,34 @@ export function createApp(
    * A draining instance reports unhealthy so the load balancer stops sending it new requests while it
    * finishes the ones it already has. It keeps answering them: `server.close()` only stops new
    * connections.
+   */
+  /**
+   * Liveness: can this process answer at all?
+   *
+   * It consults nothing, and it stays 200 while draining. A liveness probe that fails during a
+   * graceful shutdown is an orchestrator killing the shutdown it asked for, and one that fails
+   * because a database is down turns one outage into a restart loop across the whole fleet — with
+   * the restarts arriving at the recovering database together.
+   */
+  app.get('/health/live', healthChecks, (_req, res) => neverStored(res).json(liveness()));
+
+  /**
+   * Readiness: should this instance be sent traffic right now?
+   *
+   * This is where storage belongs, and where draining belongs: a draining instance is alive and
+   * finishing its work, and has to leave the rotation without being killed part-way through.
+   */
+  app.get('/health/ready', healthChecks, async (_req, res, next) => {
+    try {
+      const result = await readiness(store);
+      return neverStored(res).status(result.status === 'ready' ? 200 : 503).json(result);
+    } catch (error) { return next(error); }
+  });
+
+  /**
+   * The original probe, kept because a running deployment's load balancer and container healthcheck
+   * are pointed at it. It is readiness — 503 while draining is what it has always meant — and its
+   * body is unchanged.
    */
   app.get('/health', healthChecks, (_req, res) => {
     neverStored(res);
@@ -457,6 +486,21 @@ export function createApp(
       const selection = requested ?? { ids: (await store.rosters(leagueId)).flatMap(r => [...r.playerIds, ...r.starterIds, ...r.reserveIds, ...r.taxiIds]) };
       await players.prepareRead();
       privateRevalidated(res).json(await players.subset(selection));
+    } catch (error) { next(error); }
+  });
+
+  /**
+   * The internal picture: what is degraded, and why, while everything is still being served.
+   *
+   * Authenticated, unlike the probes, because it is a description of the deployment's internals —
+   * how fresh the forecast is, when a league last synchronized, whether the schedule is being
+   * claimed, how Sleeper is behaving. None of it changes whether to route here, all of it is what
+   * somebody wants at three in the morning, and none of it belongs on a public endpoint.
+   */
+  app.get('/api/ops/status', accountTraffic, async (req, res, next) => {
+    try {
+      query(req, {});
+      res.json(await dependencyStatus({ store, forecast: signals }));
     } catch (error) { next(error); }
   });
 

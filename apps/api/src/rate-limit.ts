@@ -1,6 +1,7 @@
 import type express from 'express';
 import type { Authentication } from './auth.js';
 import { tooManyRequests } from './http/errors.js';
+import { rateLimitEvents } from './observability/instruments.js';
 
 /**
  * Fixed-window counters held in this process.
@@ -126,7 +127,12 @@ export function rateLimit(options: RateLimitOptions): express.RequestHandler {
     res.set('RateLimit-Remaining', String(tightest.remaining));
     res.set('RateLimit-Reset', String(tightest.resetSeconds));
     const exceeded = charges.find(entry => entry.exceeded);
-    if (exceeded) return next(tooManyRequests(message, exceeded.resetSeconds));
+    if (exceeded) {
+      // Which dimension ran out is the operational question: an address budget exhausting is a
+      // flood, a session budget exhausting is one client in a loop, and they need different actions.
+      rateLimitEvents.inc({ bucket, scope: exceeded.scope });
+      return next(tooManyRequests(message, exceeded.resetSeconds));
+    }
     next();
   };
 }

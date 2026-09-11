@@ -4,6 +4,7 @@ import type express from 'express';
 import { parseWebOrigins } from './config/origins.js';
 import type { ApplicationSession, ApplicationUser } from './store.js';
 import type { ApplicationUserRepository, SessionRepository } from './storage/repositories.js';
+import { authFailures } from './observability/instruments.js';
 
 /** Authentication needs accounts and sessions, and nothing else the repository holds. */
 type AuthenticationRepository = ApplicationUserRepository & SessionRepository;
@@ -108,26 +109,29 @@ export async function issueCsrfToken(store: AuthenticationRepository, session: A
 export function authentication(store: AuthenticationRepository, policy = sessionPolicy()) {
   return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const rawSessionId = cookie(req);
-    if (!rawSessionId) return res.status(401).json({ error: 'Authentication required.' });
-    const reject = (error: string) => res.status(401).append('Set-Cookie', clearSessionCookie()).json({ error });
+    if (!rawSessionId) { authFailures.inc({ reason: 'no_cookie' }); return res.status(401).json({ error: 'Authentication required.' }); }
+    // The reason is counted here rather than derived from the 401 count, because the three that
+    // matter are indistinguishable from outside: an expired session is a policy question, a missing
+    // one is a bookmark, and a revoked one being replayed is a stolen cookie.
+    const reject = (error: string, reason: string) => { authFailures.inc({ reason }); return res.status(401).append('Set-Cookie', clearSessionCookie()).json({ error }); };
     let session = await store.session(digest(rawSessionId));
     const now = Date.now();
-    if (!session) return reject('Session expired or revoked.');
+    if (!session) return reject('Session expired or revoked.', 'unknown_session');
     if (session.revokedAt) {
       // A revoked id in the hands of a client means the family may be compromised; retire all of it.
       await store.revokeSessionFamily(session.familyId, 'reuse-detected');
-      return reject('Session expired or revoked.');
+      return reject('Session expired or revoked.', 'revoked_session_replayed');
     }
     if (Date.parse(session.expiresAt) <= now || Date.parse(session.absoluteExpiresAt) <= now) {
       await store.revokeSession(session.idHash, 'expired');
-      return reject('Session expired. Sign in again.');
+      return reject('Session expired. Sign in again.', 'expired');
     }
     if (session.supersededAt && now - Date.parse(session.supersededAt) > policy.graceMs) {
       await store.revokeSessionFamily(session.familyId, 'reuse-detected');
-      return reject('Session expired or revoked.');
+      return reject('Session expired or revoked.', 'reuse_detected');
     }
     const user = await store.applicationUser(session.userId);
-    if (!user) { await store.revokeSessionFamily(session.familyId, 'user-removed'); return reject('Authentication required.'); }
+    if (!user) { await store.revokeSessionFamily(session.familyId, 'user-removed'); return reject('Authentication required.', 'user_removed'); }
 
     let current = { rawSessionId, session };
     if (!session.supersededAt && now - Date.parse(session.lastRotatedAt) >= policy.rotateMs) {
@@ -151,7 +155,10 @@ export function csrf(req: express.Request, res: express.Response, next: express.
   if (!MUTATING.has(req.method)) return next();
   const auth = res.locals.auth as Authentication;
   const supplied = req.header('x-csrf-token');
-  if (!supplied || !auth.session.csrfHashes.some(hash => equal(hash, digest(supplied)))) return res.status(403).json({ error: 'Invalid CSRF token.' });
+  if (!supplied || !auth.session.csrfHashes.some(hash => equal(hash, digest(supplied)))) {
+    authFailures.inc({ reason: supplied ? 'csrf_mismatch' : 'csrf_missing' });
+    return res.status(403).json({ error: 'Invalid CSRF token.' });
+  }
   next();
 }
 

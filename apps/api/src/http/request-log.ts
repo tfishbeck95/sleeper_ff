@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type express from 'express';
 import type { Authentication } from '../auth.js';
 import { identify, type Logger } from '../log.js';
+import { httpDuration, httpInFlight, httpRequests } from '../observability/instruments.js';
 import { routeOf } from './errors.js';
 
 /**
@@ -63,16 +64,25 @@ export interface AccessLogOptions {
 export function accessLog(log: Logger, { quiet, now = () => Date.now() }: AccessLogOptions = {}): express.RequestHandler {
   return (req, res, next) => {
     const started = now();
+    httpInFlight.inc();
     let written = false;
     const write = (aborted: boolean) => {
       if (written) return;
       written = true;
+      httpInFlight.dec();
+      const route = routeOf(req);
+      const durationSeconds = (now() - started) / 1000;
+      // Measured for every request including the quiet ones: a probe that starts timing out is
+      // exactly the thing worth seeing, and it is the request that never appears in a log.
+      // The status is recorded as a *class*, so the label stays a closed set of four values.
+      httpRequests.inc({ route, method: req.method, status: `${Math.floor(res.statusCode / 100)}xx` });
+      httpDuration.observe({ route, method: req.method }, durationSeconds);
       if (quiet?.(req)) return;
       const auth = res.locals.auth as Authentication | undefined;
       const fields = {
         requestId: res.locals.requestId,
         method: req.method,
-        route: routeOf(req),
+        route,
         status: res.statusCode,
         durationMs: now() - started,
         ip: addressOf(req),

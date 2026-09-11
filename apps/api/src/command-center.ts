@@ -6,6 +6,7 @@ import type { ApplicationUser } from './store.js';
 import type { LeagueReadRepository } from './storage/repositories.js';
 import type { LeagueSyncService } from './sync.js';
 import { immutableSnapshot, validatedForecastSnapshot, type WaiverSignalProvider, type WaiverSignals } from './waiver-signals.js';
+import { recommendationSections, recommendationsUnavailable } from './observability/instruments.js';
 
 export class DashboardAccessError extends Error {
   constructor(public readonly status: number, message: string) { super(message); }
@@ -57,13 +58,38 @@ export class CommandCenterService {
     const forecastWarnings = forecastError ? ['The forecast source could not be loaded or failed validation.']
       : forecastState === 'unavailable' ? ['No validated forecast is available for the selected season and week.']
         : forecastState === 'stale' ? ['Forecasts are over 48 hours old or future-dated. Refresh the source before using recommendations.'] : [];
+    /**
+     * Why advice was withheld, as a fixed reason rather than as a warning string.
+     *
+     * This application refuses to rank on incomplete inputs rather than ranking anyway, so
+     * "unavailable" is a designed outcome and not an error — which makes the reason the only
+     * operational signal there is. Stale scoring, a missing forecast and a failed engine need three
+     * different people to do three different things, and the warnings the dashboard shows are prose
+     * written for a manager, not a label a dashboard can group by.
+     */
+    const unavailableReason = (): string =>
+      !rules.scoring.actionable ? 'scoring_unvalidated'
+        : forecastError ? 'forecast_error'
+          : forecastState === 'unavailable' ? 'forecast_missing'
+            : forecastState === 'stale' ? 'forecast_stale'
+              : scoringState === 'stale' ? 'scoring_stale'
+                : rosterState === 'stale' ? 'rosters_stale'
+                  : syncFailed ? 'sync_failed' : 'engine_prerequisite';
+
     async function run<T extends { status: 'ready' | 'partial' | 'unavailable'; warnings: string[] }>(name: string, evaluate: () => T | Promise<T>): Promise<DashboardSection<T>> {
+      const label = name.toLowerCase();
       try {
         const report = await evaluate();
         const state = forecastState === 'error' ? 'error' : forecastState === 'stale' || rosterState === 'stale' || scoringState === 'stale' ? 'stale'
           : report.status === 'ready' && syncFailed ? 'partial' : report.status;
+        recommendationSections.inc({ section: label, state });
+        if (report.status === 'unavailable') recommendationsUnavailable.inc({ section: label, reason: unavailableReason() });
         return section(report, state, [...engineWarnings, ...forecastWarnings, ...report.warnings]);
-      } catch { return section<T>(null, 'error', [`${name} analysis failed. Recheck to try again.`, ...syncWarnings]); }
+      } catch {
+        recommendationSections.inc({ section: label, state: 'error' });
+        recommendationsUnavailable.inc({ section: label, reason: 'engine_failed' });
+        return section<T>(null, 'error', [`${name} analysis failed. Recheck to try again.`, ...syncWarnings]);
+      }
     }
     const [lineup, waivers, trades] = await Promise.all([
       run('Lineup', () => this.engine.lineup(input)),

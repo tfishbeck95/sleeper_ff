@@ -13,6 +13,9 @@ import { LeagueSyncService } from './sync.js';
 import { sleeperClient } from './config/upstream.js';
 import { servesHttps } from './http/security.js';
 import { logger } from './log.js';
+import { measured } from './observability/measured-store.js';
+import { startObservabilityServer } from './observability/server.js';
+import { OperationsMonitor, alertSinkFromEnv } from './observability/monitor.js';
 
 /**
  * What both processes are built from.
@@ -70,6 +73,9 @@ export function createRuntime(configuration: RuntimeConfiguration): Runtime {
   let store: HuddleRepository;
   try { ({ repository: store } = createRepository()); }
   catch (error) { logger.error({ error }, error instanceof Error ? error.message : String(error)); process.exit(78); }
+  // Timed at the seam rather than inside each adapter, so the numbers exist for the JSON adapter
+  // today and for the PostgreSQL one the day it lands, without either of them knowing.
+  store = measured(store);
   // One client, built from the validated budgets rather than from its own defaults, so every call to
   // Sleeper in this process waits for exactly as long as the deployment said it may.
   const sleeper: SleeperClient = sleeperClient('interactive');
@@ -149,6 +155,18 @@ export function startHttp(runtime: Runtime, reader: ProjectionFeedStore | null =
 }
 
 /**
+ * Binds the metrics and probe port, when one is configured.
+ *
+ * Both processes call it: the worker has no application port to serve probes on, and an API
+ * instance's `/metrics` must not be on the port the internet reaches.
+ */
+export function startObservability(runtime: Runtime): Component | null {
+  const { configuration, store } = runtime;
+  if (!configuration.metricsPort) return null;
+  return startObservabilityServer({ port: configuration.metricsPort, readinessSource: store, log: logger }).component;
+}
+
+/**
  * Starts everything that runs on a clock.
  *
  * All of it is gated on owning the schedule, for the same reason the league sweep is: these are
@@ -187,12 +205,27 @@ export function startScheduledWork(runtime: Runtime): Component | null {
   const sessionSweep = setInterval(() => void store.pruneSessions().catch(error => logger.error({ component: 'sessions', error }, 'session prune failed')), Math.max(configuration.sync.intervalMs, 60 * 60_000));
   sessionSweep.unref();
 
+  /**
+   * The alert conditions, evaluated where the schedule is owned.
+   *
+   * Here rather than on every API instance because the conditions are about the installation — is
+   * the schedule running, is the forecast fresh, are leagues falling behind — and one condition
+   * evaluated on twelve instances is twelve alerts about one problem.
+   */
+  const monitor = new OperationsMonitor({
+    store, forecast: configureProjectionFeedReader(),
+    sink: alertSinkFromEnv(process.env, logger),
+    intervalMs: configuration.alertIntervalMs, log: logger,
+  });
+  monitor.start();
+
   return {
     // A stopped worker holds no timer and takes no new leases; the sweep already running keeps its own
     // until it finishes, which is what `drain` waits for.
     stop: () => {
       worker.stop();
       projectionFeed?.schedule.stop();
+      monitor.stop();
       clearInterval(playerSweep);
       clearInterval(sessionSweep);
     },
@@ -201,6 +234,7 @@ export function startScheduledWork(runtime: Runtime): Component | null {
       // instance to wait out, and an ingestion seconds from finishing is not thrown away.
       await worker.settled();
       await projectionFeed?.schedule.settled();
+      await monitor.settled();
     },
   };
 }

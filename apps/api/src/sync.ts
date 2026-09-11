@@ -9,6 +9,7 @@ import type {
 import { PlayerDirectoryService, PLAYER_REFRESH_MS } from './players.js';
 import { logger } from './log.js';
 import { sleeperClient } from './config/upstream.js';
+import { syncDuration, syncRuns } from './observability/instruments.js';
 
 /** What one league's synchronization touches: the league, its rosters, the shared directory and the log. */
 type LeagueSyncRepository = LeagueRepository & RosterRepository & SnapshotWriteRepository & SyncRunRepository & PlayerRepository & LeaseRepository;
@@ -75,10 +76,14 @@ export class LeagueSyncService {
         write.weeklySnapshot = { id, leagueId, season, week, rosterIds: snapshotRosters.map(v => v.id), matchupIds: snapshotMatchups.map(v => v.id), rosters: snapshotRosters, matchups: snapshotMatchups, scoring, ...source(synchronizedAt) };
       }
       await this.store.applySync(write); await this.store.recordSync(leagueId, 'success', synchronizedAt, Date.now() - started);
+      syncRuns.inc({ outcome: 'success' });
+      syncDuration.observe({ outcome: 'success' }, (Date.now() - started) / 1000);
       this.logger.info({ leagueId, durationMs: Date.now() - started, refreshed, synchronizedAt }, 'league synchronization completed');
       return { leagueId, synchronizedAt, refreshed, scoring, ...(write.weeklySnapshot ? { snapshotId: write.weeklySnapshot.id } : {}) };
     } catch (error) {
       const category = error instanceof SleeperApiError ? error.category : 'internal'; await this.store.recordSync(leagueId, 'failed', synchronizedAt, Date.now() - started, category);
+      syncRuns.inc({ outcome: 'failed' });
+      syncDuration.observe({ outcome: 'failed' }, (Date.now() - started) / 1000);
       this.logger.error({ leagueId, durationMs: Date.now() - started, category }, 'league synchronization failed'); throw error;
     }
   }

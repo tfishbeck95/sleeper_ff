@@ -1,5 +1,6 @@
-import { SleeperClient } from '@sleeper/sleeper-client';
+import { SleeperClient, type SleeperCallObservation } from '@sleeper/sleeper-client';
 import { ProviderHttpClient, type ProviderHttpOptions } from '../providers/http.js';
+import { sleeperCalls, sleeperDuration, sleeperFailures, sleeperRetries, sleeperTimeouts } from '../observability/instruments.js';
 
 /**
  * How long this application will wait on somebody else's server, decided in one place.
@@ -102,14 +103,33 @@ export function resolveUpstreamBudgets(env: NodeJS.ProcessEnv = process.env): Up
 }
 
 /**
- * A Sleeper client on a named budget.
+ * Turns one call into the counters an operator reads.
  *
- * Every construction site in the application goes through here, which is what makes the budget a
- * property of the deployment rather than of whichever module happened to build the client.
+ * Retries are counted rather than inferred: a call that succeeded on its third attempt is a success
+ * *and* two retries, and a dashboard that only sees the success cannot tell a healthy upstream from
+ * one that is failing two out of every three requests.
+ */
+export function observeSleeperCall(observation: SleeperCallObservation) {
+  const { endpoint, attempts, outcome } = observation;
+  sleeperCalls.inc({ endpoint, outcome });
+  sleeperDuration.observe({ endpoint }, observation.durationMs / 1000);
+  if (attempts > 1) sleeperRetries.inc({ endpoint, category: observation.category ?? 'unknown' }, attempts - 1);
+  if (outcome === 'failure') {
+    sleeperFailures.inc({ endpoint, category: observation.category ?? 'unknown' });
+    if (observation.category === 'timeout') sleeperTimeouts.inc({ endpoint });
+  }
+}
+
+/**
+ * A Sleeper client on a named budget, reporting what each call did.
+ *
+ * Every construction site in the application goes through here, which is what makes both the budget
+ * and the measurement properties of the deployment rather than of whichever module built the client.
  */
 export function sleeperClient(profile: UpstreamProfile = 'interactive', fetcher?: typeof fetch, env: NodeJS.ProcessEnv = process.env): SleeperClient {
   const budget = upstreamBudgets(env)[profile];
   return new SleeperClient(fetcher, undefined, {
+    observe: observeSleeperCall,
     timeoutMs: budget.timeoutMs,
     maxRetries: budget.maxAttempts - 1,
     backoffMs: budget.backoffMs,
