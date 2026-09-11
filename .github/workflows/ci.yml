@@ -33,9 +33,6 @@ concurrency:
 
 env:
   NODE_VERSION: '22'
-  # Pinned, and installed by hand rather than through a third-party action, for the same reason
-  # gitleaks is: the thing that inspects the build is part of the build's supply chain too.
-  TRIVY_VERSION: '0.58.0'
 
 jobs:
   # --- Type check, test, build ------------------------------------------------------------------
@@ -177,9 +174,21 @@ jobs:
         run: npm audit --audit-level=moderate
 
       - name: Install trivy
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
-            | tar -xz -C /usr/local/bin trivy
+          # Resolved from the current release rather than pinned to a version, and the asset picked by
+          # pattern rather than by name. A vulnerability scanner is the one dependency you want to be
+          # current — a pinned old one quietly stops seeing new advisories, which is the failure mode
+          # that matters here — and trivy has changed its release asset naming before, which is a
+          # build breaking on something that has nothing to do with the commit.
+          asset=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/aquasecurity/trivy/releases/latest \
+            | jq -r '.assets[].browser_download_url' \
+            | grep -Ei 'linux[-_](64bit|amd64|x86_64)\.tar\.gz$' | head -1)
+          if [ -z "$asset" ]; then echo 'no linux amd64 asset in the current trivy release'; exit 1; fi
+          echo "installing $asset"
+          curl -fsSL "$asset" | tar -xz -C /usr/local/bin trivy
           trivy --version
 
       # A second opinion on the same lockfile, from a different advisory database. `npm audit` reads
@@ -272,9 +281,21 @@ jobs:
           docker compose --env-file .env.staging -f compose.yaml -f compose.staging.yaml config --quiet
 
       - name: Install trivy
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
-            | tar -xz -C /usr/local/bin trivy
+          # Resolved from the current release rather than pinned to a version, and the asset picked by
+          # pattern rather than by name. A vulnerability scanner is the one dependency you want to be
+          # current — a pinned old one quietly stops seeing new advisories, which is the failure mode
+          # that matters here — and trivy has changed its release asset naming before, which is a
+          # build breaking on something that has nothing to do with the commit.
+          asset=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/aquasecurity/trivy/releases/latest \
+            | jq -r '.assets[].browser_download_url' \
+            | grep -Ei 'linux[-_](64bit|amd64|x86_64)\.tar\.gz$' | head -1)
+          if [ -z "$asset" ]; then echo 'no linux amd64 asset in the current trivy release'; exit 1; fi
+          echo "installing $asset"
+          curl -fsSL "$asset" | tar -xz -C /usr/local/bin trivy
           trivy --version
 
       # The images, not the lockfile. Most of what is in one of these came from a base image — the

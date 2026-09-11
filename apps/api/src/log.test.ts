@@ -11,8 +11,11 @@ function recorder() {
 
 test('a session token never reaches a log line, whatever it is called or nested inside', () => {
   const { log, lines } = recorder();
-  // The real shapes: 43 characters of base64url from `randomBytes(32)`, and its sha256 digest.
-  const rawSessionId = 'sSsCUwLRlSzRmnyXPnStHxXyYWLtmbGPvKXHXiZDhCE';
+  // The shapes that matter, built rather than pasted: a session id is base64url from
+  // `randomBytes(32)` and its digest is 64 hex characters, and the redactor keys on that shape. They
+  // are derived from a sentence here so the fixture is provably not a credential — a literal of the
+  // right shape is a finding for any secret scanner, and correctly so.
+  const rawSessionId = Buffer.from('not-a-real-session-id-only-its-shape').toString('base64url');
   const idHash = 'a'.repeat(64);
   log.info({ rawSessionId, session: { idHash, csrfHashes: [idHash] }, note: `resumed with ${rawSessionId}` }, 'session resumed');
   const [line] = lines;
@@ -27,7 +30,7 @@ test('a session token never reaches a log line, whatever it is called or nested 
 test('a provider credential is removed whether it is a field, a header or part of a URL', () => {
   const { log, lines } = recorder();
   log.error({
-    apiKey: 'live_9f8e7d6c5b4a39281706',
+    apiKey: 'not-a-real-key',
     headers: { 'Ocp-Apim-Subscription-Key': 'a-licensed-key' },
     url: 'https://api.sportsdata.io/v3/nfl/projections?key=a-licensed-key',
     databaseUrl: 'postgres://huddle:hunter2@db.internal:5432/huddle',
