@@ -1,5 +1,12 @@
 import { SleeperApiError } from '@sleeper/sleeper-client';
-import type { JsonStore, LeagueConnection } from '../store.js';
+import type { LeagueConnection } from '../store.js';
+import type { LeagueConnectionRepository, LeagueRepository, LeaseRepository, SyncRunRepository } from '../storage/repositories.js';
+
+/**
+ * The connection set, the league metadata retention reads, per-resource freshness — and the leases,
+ * which the worker only touches through the lock it builds when none is supplied.
+ */
+export type LeagueSyncWorkerRepository = LeagueConnectionRepository & LeagueRepository & SyncRunRepository & LeaseRepository;
 import type { SyncResult } from '../sync.js';
 import { StoreSyncLock, type LeaseHandle, type SyncLock } from './lock.js';
 import { leagueIsHistorical, resolveSyncTarget } from './week.js';
@@ -100,7 +107,7 @@ export class LeagueSyncWorker {
   private readonly options: Required<Omit<LeagueSyncWorkerOptions, 'setTimer' | 'clearTimer' | 'lock'>> & Pick<LeagueSyncWorkerOptions, 'setTimer' | 'clearTimer'>;
   private readonly lock: SyncLock;
 
-  constructor(private readonly store: JsonStore, private readonly sync: LeagueSynchronizer, options: LeagueSyncWorkerOptions = {}) {
+  constructor(private readonly store: LeagueSyncWorkerRepository, private readonly sync: LeagueSynchronizer, options: LeagueSyncWorkerOptions = {}) {
     this.options = {
       concurrency: Math.max(1, options.concurrency ?? 3),
       sweepIntervalMs: Math.max(60_000, options.sweepIntervalMs ?? 30 * 60_000),

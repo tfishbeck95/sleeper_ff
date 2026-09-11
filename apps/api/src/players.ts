@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { NflPlayer } from '@sleeper/domain';
 import { SleeperApiError, SleeperClient, type SleeperMatchup, type SleeperRoster, type SleeperTransaction } from '@sleeper/sleeper-client';
-import { JsonStore } from './store.js';
+import type { LeaseRepository, PlayerRepository } from './storage/repositories.js';
+
+/** The directory and the lease that keeps one refresh in flight at a time. */
+type PlayerDirectoryRepository = PlayerRepository & LeaseRepository;
 
 export const PLAYER_REFRESH_MS = 24 * 60 * 60_000;
 export const PLAYER_RETRY_MS = 60 * 60_000;
-const jobs = new WeakMap<JsonStore, Promise<boolean>>();
+const jobs = new WeakMap<PlayerDirectoryRepository, Promise<boolean>>();
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 export const validPlayerId = (id: string) => /^[A-Za-z0-9_-]{1,64}$/.test(id) && id !== '0';
 const retired = (status: string | null) => ['retired', 'deceased'].includes((status ?? '').toLowerCase());
@@ -44,7 +47,7 @@ export function leaguePlayerIds(rosters: SleeperRoster[], matchups: SleeperMatch
 }
 
 export class PlayerDirectoryService {
-  constructor(private readonly store: JsonStore, private readonly client = new SleeperClient(), private readonly now = () => new Date()) {}
+  constructor(private readonly store: PlayerDirectoryRepository, private readonly client = new SleeperClient(), private readonly now = () => new Date()) {}
 
   /** Serve stored availability immediately during a slow refresh. Cold starts get a short budget
    * to populate names, then return placeholders while ingestion continues in the background. */

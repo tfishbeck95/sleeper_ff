@@ -11,8 +11,10 @@ Express API ── recommendation rules (@sleeper/domain)
    │    └── league synchronization worker (one instance, leased)
    │              │
    ▼              ▼
-JSON snapshot store     typed Sleeper client
-(durable volume)        (documented read API)
+repository interfaces    typed Sleeper client
+   │                     (documented read API)
+   ├── JSON document (local development, one instance)
+   └── PostgreSQL schema (apps/api/migrations)
 ```
 
 `apps/web` renders the responsive dashboard and never contacts Sleeper directly. `apps/api` owns authentication, synchronization, recommendation orchestration, and persistence. `packages/domain` is the dependency-free contract shared by both applications. `packages/sleeper-client` contains the small typed, timeout-bounded upstream adapter. `packages/ui` holds accessible presentation primitives.
@@ -27,11 +29,36 @@ JSON snapshot store     typed Sleeper client
 
 ## Storage model
 
-The local adapter persists a versionable JSON document containing snapshots keyed by league ID, the active league connections with the week each is tracking and the outcome of its last attempt, the worker's leases, and a bounded synchronization log. Writes use a temporary file followed by an atomic rename. Production deployments should implement the same repository interface with PostgreSQL: `users`, `league_connections`, `league_snapshots`, `recommendations`, and `sync_runs`. Encrypt any session material at rest and keep it separate from public Sleeper IDs.
+Persistence is behind repository interfaces (`apps/api/src/storage/repositories.ts`), and modules take
+the narrowest port they need rather than a store. Every method is one unit of work: an adapter applies
+it atomically or not at all, which is what makes `applySync` safe to call with an authoritative
+replacement inside it and `rotateSession` safe against a crash between retiring a session id and issuing
+its successor. There is no transaction spanning methods, because nothing needs one and offering it would
+force the local adapter to pretend to something a file cannot provide.
+
+The local adapter persists a versionable JSON document: snapshots keyed by league ID, the active league
+connections with the week each is tracking and the outcome of its last attempt, the shared player
+directory, observations, recommendations, the worker's leases and a bounded synchronization log. Writes
+use a temporary file followed by an atomic rename, which is atomic within one process and no further.
+
+The PostgreSQL schema in `apps/api/migrations` is the same contract as tables — accounts and sessions,
+Sleeper associations, league connections, leagues and their scoring snapshots, members and roster
+ownership, players and aliases, rosters and roster history, matchups, transactions, traded picks, weekly
+observations, forecast snapshots, recommendations with their explanations and outcomes, synchronization
+runs, per-resource freshness and the lease table. Sleeper ids and snapshot ids are keys; a recommendation
+cites its league's scoring observation through a composite foreign key, so points scored under one
+commissioner's rules cannot rank another league at rest any more than they can in memory; observations
+reject `UPDATE`; and retention is SQL functions the worker calls. Session material is digests only, kept
+in its own tables and never mixed with public Sleeper ids.
+
+Which adapter a process talks to is explicit configuration, and the JSON adapter is refused for a
+multi-instance production deployment rather than warned about. See [`docs/storage.md`](storage.md), and
+[`docs/data-durability.md`](data-durability.md) for the backup, restore, rollback and point-in-time
+recovery procedures that have to be in place before the first migration that stores user data.
 
 ## Deployment model
 
-Build the web application as static assets served through a CDN. Run the API as a single container with a persistent volume for the local profile or PostgreSQL for horizontally scaled deployments. In scaled production, run the synchronization worker on one instance or as a managed job (`SYNC_WORKER_ENABLED=false` everywhere else) and implement `SyncLock` over the database rather than the JSON store: the sweep lease keeps one instance in charge and the per-league lease keeps a league from being synchronized twice at once, but the file-backed implementation is only atomic within a process. See [`docs/league-sync.md`](league-sync.md). Terminate TLS at the edge, restrict CORS to the web origin, inject configuration through environment variables, rotate bearer/session keys, and expose `/health` to orchestration.
+Build the web application as static assets served through a CDN. Run the API as a single container with a persistent volume for the local profile (`STORAGE_ADAPTER=json`), or on PostgreSQL for horizontally scaled deployments (`STORAGE_ADAPTER=postgres`, with `apps/api/migrations` applied first). In scaled production, run the synchronization worker on one instance or as a managed job (`SYNC_WORKER_ENABLED=false` everywhere else) and implement `SyncLock` over the `sync_lease` table rather than the JSON document: the sweep lease keeps one instance in charge and the per-league lease keeps a league from being synchronized twice at once, but the file-backed implementation is only atomic within a process — which is why `APP_INSTANCE_MODE=multi` refuses the JSON adapter in production. See [`docs/league-sync.md`](league-sync.md). Terminate TLS at the edge, restrict CORS to the web origin, inject configuration through environment variables, rotate bearer/session keys, and expose `/health` to orchestration.
 
 ### Scoring provenance and validation
 

@@ -64,11 +64,13 @@ hold the schedule shut.
 `StoreSyncLock` keeps leases in the same JSON store as the data. Within one process this is genuinely
 mutually exclusive: the store serializes every write and the read-modify-write that takes a lease
 happens inside one of them. **Two processes sharing one JSON file can still interleave**, which is why
-the local profile is documented as single-instance. A horizontally scaled deployment implements
-`SyncLock` over the database it already runs — `SELECT … FOR UPDATE`, a Postgres advisory lock, or
-`SET NX PX` — and nothing above the interface changes. Set `SYNC_WORKER_ENABLED=false` on every
-instance except the one worker or managed job; the sweep lease is the safety net for a fleet that
-forgets.
+the local profile is documented as single-instance and refused for a multi-instance production
+deployment. A horizontally scaled deployment uses the `sync_lease` table the schema already defines:
+`huddle_acquire_lease` is one statement, so two instances racing for the same key cannot both win, and
+a refusal is no row rather than a lease that only looks taken. Nothing above the interface changes.
+
+Set `SYNC_WORKER_ENABLED=false` on every instance except the one worker or managed job; the sweep lease
+is the safety net for a fleet that forgets.
 
 ## The sample league
 
@@ -86,6 +88,12 @@ data:
 | --- | --- | --- |
 | **Archive** | The league's season is over — an earlier season than the calendar's, or `complete` past week 18 — and its last successful synchronization is older than `SYNC_ARCHIVE_AFTER_DAYS` | It stops being scheduled. Every byte is kept: last season's league is exactly what a manager opens in March. |
 | **Prune** | The connection has been archived for longer than `SYNC_PRUNE_AFTER_DAYS` **and** no account links it any more | The league, its rosters, matchups, transactions, traded picks, weekly observations and freshness entries are deleted. The shared player directory is never touched: it belongs to every league. |
+
+Archiving is the worker's decision, because it depends on the NFL calendar. The deletions are storage
+rules, and on PostgreSQL they are the `huddle_apply_retention` functions the worker calls — including
+the ones this table does not cover: sessions that can no longer authenticate anything, aged
+synchronization runs, forecasts nothing cites, advice older than its window, and roster history thinned
+to one observation per week. See [storage](storage.md#retention).
 
 A league someone still has connected is never deleted underneath them, however long it has been
 archived. Unlinking a league archives it with the reason `unlinked`; re-linking it revives that
@@ -134,10 +142,11 @@ Failures update attempt/error metadata but never replace the last good players o
 timestamp. Successful replacement removes IDs no longer in the feed; those IDs get safe placeholders
 when requested. Explicitly retired/deceased entries retain their names and availability flags.
 
-The existing JSON storage profile is persistent and shared across all users and leagues in one API
-instance. It is **not a cross-process database**: multiple replicas require a transactional shared
-store and distributed player lease, just as the league worker does. Mount `DATA_FILE` on persistent
-storage when running in a container.
+The JSON storage profile is persistent and shared across all users and leagues in one API instance. It
+is **not a cross-process database**: multiple replicas require a transactional shared store and
+distributed player lease, just as the league worker does — which is why `STORAGE_ADAPTER=json` is
+refused for a multi-instance production deployment. Mount `DATA_FILE` on persistent storage when running
+in a container, and see [storage](storage.md) for the adapter selection and the PostgreSQL schema.
 
 The browser's `loadLeague` makes one authenticated Huddle request:
 

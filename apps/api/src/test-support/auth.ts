@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { cookieName, issueSession } from '../auth.js';
-import type { JsonStore } from '../store.js';
+import type { ApplicationUserRepository, SessionRepository } from '../storage/repositories.js';
 
 /**
  * Signs in a distinct application user through the real session issuer, so route tests can assert that
  * authorization follows the session's own Sleeper identity rather than anything the request carries.
  */
-export async function signedInAs(store: JsonStore, identity: { sleeperUserId?: string; leagueIds?: string[] } = {}) {
+export async function signedInAs(store: ApplicationUserRepository & SessionRepository, identity: { sleeperUserId?: string; leagueIds?: string[] } = {}) {
   const user = {
     id: randomUUID(), login: `test-${randomUUID()}`, passwordHash: 'disabled',
     sleeperUserId: identity.sleeperUserId, sleeperLeagueIds: identity.leagueIds ?? [], createdAt: new Date().toISOString(),

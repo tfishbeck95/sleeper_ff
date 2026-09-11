@@ -1,17 +1,22 @@
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
 import { SleeperClient } from '@sleeper/sleeper-client';
 import { demoEnabled, validateAuthenticationConfig } from './auth.js';
 import { createApp } from './app.js';
 import { demoSnapshot } from './demo.js';
 import { configureProjectionFeed } from './providers/index.js';
 import { configureLeagueSyncWorker, syncWorkerEnabled } from './scheduler/index.js';
-import { JsonStore } from './store.js';
+import { createRepository, describeStorage } from './storage/index.js';
 import { LeagueSyncService } from './sync.js';
 import { PlayerDirectoryService } from './players.js';
 
 validateAuthenticationConfig();
-const store = new JsonStore(resolve(process.env.DATA_FILE ?? '../../data/store.json'));
+// Storage is named by configuration rather than inferred, and a configuration that cannot hold up —
+// the local JSON adapter behind several instances in production — is refused here rather than
+// discovered when two instances start overwriting each other. See docs/storage.md.
+const { repository: store, configuration: storage } = createRepository();
+console.info(`[storage] ${describeStorage(storage)}`);
+if (storage.defaulted) console.info('[storage] STORAGE_ADAPTER is unset; using the local JSON adapter. Production requires it to be named explicitly.');
+for (const warning of storage.warnings) console.warn(`[storage] ${warning}`);
 const port = Number(process.env.PORT ?? 4000);
 const interval = Number(process.env.SYNC_INTERVAL_MINUTES ?? 30) * 60_000;
 if (process.env.APP_LOGIN_PASSWORD_HASH && !await store.applicationUserByLogin(process.env.APP_LOGIN_USER ?? 'admin')) {

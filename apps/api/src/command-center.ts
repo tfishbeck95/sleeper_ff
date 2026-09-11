@@ -2,7 +2,8 @@ import { interpretLeagueRules, type CommandCenterResponse, type DashboardSection
 import { analyzeLineup, type LineupInput } from './lineup.js';
 import { recommendWaivers } from './waivers.js';
 import { recommendTrades } from './trades.js';
-import type { ApplicationUser, JsonStore } from './store.js';
+import type { ApplicationUser } from './store.js';
+import type { LeagueReadRepository } from './storage/repositories.js';
 import type { LeagueSyncService } from './sync.js';
 import { immutableSnapshot, validatedForecastSnapshot, type WaiverSignalProvider, type WaiverSignals } from './waiver-signals.js';
 
@@ -19,7 +20,7 @@ function freshness(at: string | null | undefined, ttl: number, now: number): Sec
 
 /** Request-scoped orchestration: authorize, sync once, read once, validate once, then isolate engines. */
 export class CommandCenterService {
-  constructor(private readonly store: JsonStore, private readonly sync: Pick<LeagueSyncService, 'syncLeague'>,
+  constructor(private readonly store: LeagueReadRepository, private readonly sync: Pick<LeagueSyncService, 'syncLeague'>,
     private readonly provider: WaiverSignalProvider, private readonly engine = engines,
     private readonly clock = () => new Date()) {}
 

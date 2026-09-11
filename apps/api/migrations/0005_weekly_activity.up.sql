@@ -1,0 +1,143 @@
+-- 0005 the week's activity: matchups, transactions, traded picks, and the weekly observation that
+-- freezes what a league looked like when it was synchronized.
+BEGIN;
+
+CREATE TABLE matchup (
+  id                 text PRIMARY KEY,
+  league_id          text NOT NULL REFERENCES league (id) ON DELETE CASCADE,
+  season             text NOT NULL CHECK (season ~ '^[0-9]{4}$'),
+  week               smallint NOT NULL CHECK (week BETWEEN 1 AND 18),
+  -- Sleeper's pairing number: two rosters sharing one are playing each other. Null before pairing.
+  matchup_id         smallint,
+  roster_id          smallint NOT NULL,
+  points             numeric(8, 2) NOT NULL,
+  custom_points      numeric(8, 2),
+  player_ids         text[] NOT NULL DEFAULT '{}',
+  starter_ids        text[] NOT NULL DEFAULT '{}',
+  player_points      jsonb NOT NULL DEFAULT '{}'::jsonb,
+  source_updated_at  timestamptz,
+  synchronized_at    timestamptz NOT NULL,
+  CONSTRAINT matchup_roster_week_unique UNIQUE (league_id, season, week, roster_id),
+  CONSTRAINT matchup_id_derived CHECK (id = league_id || ':' || season || ':' || week || ':' || roster_id)
+);
+-- The league/week read the dashboard makes on every request.
+CREATE INDEX matchup_league_week_idx ON matchup (league_id, season, week);
+-- Resolving the scheduled opponent is a lookup by pairing within that week.
+CREATE INDEX matchup_pairing_idx ON matchup (league_id, season, week, matchup_id) WHERE matchup_id IS NOT NULL;
+-- "Where did this player start this week" — the player access path across a league's weeks.
+CREATE INDEX matchup_players_idx ON matchup USING gin (player_ids);
+CREATE INDEX matchup_starters_idx ON matchup USING gin (starter_ids);
+
+CREATE TABLE league_transaction (
+  id                 text PRIMARY KEY,
+  league_id          text NOT NULL REFERENCES league (id) ON DELETE CASCADE,
+  week               smallint NOT NULL CHECK (week BETWEEN 1 AND 18),
+  type               text NOT NULL CHECK (type IN ('trade', 'waiver', 'free_agent', 'commissioner')),
+  status             text NOT NULL,
+  roster_ids         smallint[] NOT NULL DEFAULT '{}',
+  waiver_budget      jsonb NOT NULL DEFAULT '[]'::jsonb,
+  source_updated_at  timestamptz,
+  synchronized_at    timestamptz NOT NULL
+);
+COMMENT ON COLUMN league_transaction.id IS 'Sleeper transaction_id. One row per upstream transaction, enforced by the primary key.';
+CREATE INDEX league_transaction_league_week_idx ON league_transaction (league_id, week, source_updated_at DESC);
+
+/*
+ * The players a transaction moved, as rows rather than as a map.
+ *
+ * Waiver planning and trade review both ask what happened to one player across a league's season,
+ * which a jsonb map can only answer by scanning every transaction.
+ */
+CREATE TABLE transaction_player (
+  transaction_id  text NOT NULL REFERENCES league_transaction (id) ON DELETE CASCADE,
+  player_id       text NOT NULL,
+  action          text NOT NULL CHECK (action IN ('add', 'drop')),
+  roster_id       smallint NOT NULL,
+  PRIMARY KEY (transaction_id, player_id, action)
+);
+CREATE INDEX transaction_player_player_idx ON transaction_player (player_id);
+
+CREATE TABLE transaction_draft_pick (
+  transaction_id     text NOT NULL REFERENCES league_transaction (id) ON DELETE CASCADE,
+  season             text NOT NULL CHECK (season ~ '^[0-9]{4}$'),
+  round              smallint NOT NULL CHECK (round > 0),
+  -- The roster the pick originally belongs to, which is what identifies it.
+  roster_id          smallint NOT NULL,
+  previous_owner_id  smallint,
+  owner_id           smallint NOT NULL,
+  PRIMARY KEY (transaction_id, season, round, roster_id)
+);
+
+/*
+ * Currently traded draft picks.
+ *
+ * This is an authoritative set, not an accumulating log: a pick that returns to its original owner
+ * disappears from Sleeper's response entirely, so a synchronization replaces the whole league's rows
+ * inside one transaction. Upserting alone would leave a returned pick showing its old owner forever.
+ */
+CREATE TABLE traded_draft_pick (
+  id                 text PRIMARY KEY,
+  league_id          text NOT NULL REFERENCES league (id) ON DELETE CASCADE,
+  season             text NOT NULL CHECK (season ~ '^[0-9]{4}$'),
+  round              smallint NOT NULL CHECK (round > 0),
+  roster_id          smallint NOT NULL,
+  previous_owner_id  smallint,
+  owner_id           smallint NOT NULL,
+  source_updated_at  timestamptz,
+  synchronized_at    timestamptz NOT NULL,
+  CONSTRAINT traded_draft_pick_unique UNIQUE (league_id, season, round, roster_id),
+  CONSTRAINT traded_draft_pick_id_derived CHECK (id = league_id || ':' || season || ':' || round || ':' || roster_id)
+);
+-- Dynasty valuation reads the picks one roster currently owns.
+CREATE INDEX traded_draft_pick_owner_idx ON traded_draft_pick (league_id, owner_id);
+
+/*
+ * One weekly observation: what this league looked like at one synchronization.
+ *
+ * The id is generated by the caller and carries the synchronization timestamp, which makes retrying
+ * the same observation idempotent rather than duplicating it. Unlike every other table here, its rows
+ * are copies rather than references — a matchup row is upserted as the week progresses, and an
+ * observation that pointed at it would silently change after the fact.
+ */
+CREATE TABLE weekly_snapshot (
+  id                   text PRIMARY KEY,
+  league_id            text NOT NULL REFERENCES league (id) ON DELETE CASCADE,
+  season               text NOT NULL CHECK (season ~ '^[0-9]{4}$'),
+  week                 smallint NOT NULL CHECK (week BETWEEN 1 AND 18),
+  -- The rules in force when the observation was taken.
+  scoring_snapshot_id  text,
+  source_updated_at    timestamptz,
+  synchronized_at      timestamptz NOT NULL,
+  CONSTRAINT weekly_snapshot_observation_unique UNIQUE (league_id, season, week, synchronized_at),
+  -- Deferred, and NO ACTION rather than CASCADE: an observation may not be orphaned from the rules
+  -- that priced it, but a whole-league delete removes both inside one transaction.
+  CONSTRAINT weekly_snapshot_scoring_fk FOREIGN KEY (league_id, scoring_snapshot_id)
+    REFERENCES league_scoring_snapshot (league_id, id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX weekly_snapshot_league_week_idx ON weekly_snapshot (league_id, season, week, synchronized_at DESC);
+
+CREATE TABLE weekly_snapshot_matchup (
+  weekly_snapshot_id  text NOT NULL REFERENCES weekly_snapshot (id) ON DELETE CASCADE,
+  matchup_id          text NOT NULL,
+  roster_id           smallint NOT NULL,
+  -- The matchup exactly as it was observed, not a reference to the row that has since moved on.
+  payload             jsonb NOT NULL,
+  PRIMARY KEY (weekly_snapshot_id, matchup_id)
+);
+
+-- Roster copies live in `roster_history`; this is the link that says which observation took them.
+ALTER TABLE roster_history
+  ADD CONSTRAINT roster_history_weekly_snapshot_fk
+  FOREIGN KEY (weekly_snapshot_id) REFERENCES weekly_snapshot (id) ON DELETE SET NULL;
+CREATE INDEX roster_history_weekly_snapshot_idx ON roster_history (weekly_snapshot_id);
+
+CREATE TRIGGER weekly_snapshot_append_only
+  BEFORE UPDATE ON weekly_snapshot
+  FOR EACH ROW EXECUTE FUNCTION huddle_forbid_update();
+CREATE TRIGGER weekly_snapshot_matchup_append_only
+  BEFORE UPDATE ON weekly_snapshot_matchup
+  FOR EACH ROW EXECUTE FUNCTION huddle_forbid_update();
+
+INSERT INTO schema_migrations (version, name) VALUES ('0005', 'weekly_activity');
+
+COMMIT;

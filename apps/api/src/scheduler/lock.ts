@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
-import type { JsonStore } from '../store.js';
+import type { LeaseRepository } from '../storage/repositories.js';
 
 /**
  * The synchronization lock.
@@ -34,7 +34,7 @@ export function workerIdentity(env: NodeJS.ProcessEnv = process.env): string {
   return configured || `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
 }
 
-type LeaseStore = Pick<JsonStore, 'acquireLease' | 'releaseLease'>;
+type LeaseStore = Pick<LeaseRepository, 'acquireLease' | 'releaseLease'>;
 
 /**
  * Leases held in the same store as the data.

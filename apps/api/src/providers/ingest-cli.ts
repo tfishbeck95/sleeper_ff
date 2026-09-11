@@ -1,5 +1,4 @@
-import { resolve } from 'node:path';
-import { JsonStore } from '../store.js';
+import { createRepository } from '../storage/index.js';
 import { configureProjectionFeed, currentNflWeek } from './configure.js';
 
 /**
@@ -22,7 +21,9 @@ if (!/^\d{4}$/.test(season) || !Number.isInteger(week) || week < 1 || week > 18)
   process.exit(2);
 }
 
-const runtime = configureProjectionFeed(new JsonStore(resolve(process.env.DATA_FILE ?? '../../data/store.json')));
+// The same adapter selection the API makes, so a recovery run cannot write somewhere the API is not
+// reading from.
+const runtime = configureProjectionFeed(createRepository().repository);
 if (!runtime) {
   console.error('PROJECTION_FEED_ENABLED is not set. See docs/projection-provider.md.');
   process.exit(2);

@@ -1,6 +1,6 @@
 import { CommandCenterService, DashboardAccessError } from './command-center.js';
 import { scoringUnavailable } from '@sleeper/domain';
-import express from 'express'; import cors from 'cors'; import { SleeperApiError, SleeperClient } from '@sleeper/sleeper-client'; import { demoSnapshot } from './demo.js'; import type { JsonStore } from './store.js';
+import express from 'express'; import cors from 'cors'; import { SleeperApiError, SleeperClient } from '@sleeper/sleeper-client'; import { demoSnapshot } from './demo.js'; import type { HuddleRepository } from './storage/repositories.js';
 import { LeagueSyncService } from './sync.js';
 import { PlayerDirectoryService, leaguePlayerIds, validPlayerId } from './players.js';
 import { LeagueSyncWorker, type QueuedSyncJob } from './scheduler/index.js';
@@ -22,7 +22,7 @@ function publicUser(user: import('./store.js').ApplicationUser){return {id:user.
  * useful things — this is queued, this last succeeded twenty minutes ago, this is waiting until 14:32
  * because Sleeper rate limited us — instead of only succeeding or failing.
  */
-async function syncState(store: JsonStore, worker: LeagueSyncWorker, leagueId: string, job?: QueuedSyncJob) {
+async function syncState(store: HuddleRepository, worker: LeagueSyncWorker, leagueId: string, job?: QueuedSyncJob) {
   const connection = await store.leagueConnection(leagueId);
   const state = worker.state(leagueId);
   return {
@@ -45,7 +45,7 @@ const leagueDetail=rateLimit({bucket:'league-detail',max:20,windowMs:60_000,key:
 const dashboards=rateLimit({bucket:'dashboard',max:120,windowMs:60_000,key:bySession});
 const authenticatedTraffic=rateLimit({bucket:'api',max:600,windowMs:60_000,key:bySession});
 const accountTraffic=rateLimit({bucket:'account',max:120,windowMs:60_000,key:bySession});
-export function createApp(store: JsonStore, sleeper = new SleeperClient(), sync = new LeagueSyncService(store, sleeper), signals: WaiverSignalProvider = new FileWaiverSignalProvider(), worker = new LeagueSyncWorker(store, sync)) { const app=express(); app.disable('x-powered-by'); app.set('trust proxy',trustProxySetting()); app.use(cors({origin:process.env.WEB_ORIGIN ?? 'http://localhost:5173', credentials:true})); app.use(express.json({limit:'32kb'}));
+export function createApp(store: HuddleRepository, sleeper = new SleeperClient(), sync = new LeagueSyncService(store, sleeper), signals: WaiverSignalProvider = new FileWaiverSignalProvider(), worker = new LeagueSyncWorker(store, sync)) { const app=express(); app.disable('x-powered-by'); app.set('trust proxy',trustProxySetting()); app.use(cors({origin:process.env.WEB_ORIGIN ?? 'http://localhost:5173', credentials:true})); app.use(express.json({limit:'32kb'}));
  const players = new PlayerDirectoryService(store, sleeper);
  const commandCenter = new CommandCenterService(store, sync, signals);
  const policy=sessionPolicy();

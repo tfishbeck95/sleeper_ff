@@ -20,6 +20,28 @@ Open `http://localhost:5173`. Configure an application login first; session cook
 
 Copy `.env.example` to `.env` to customize local configuration. See [`docs/product-scope.md`](docs/product-scope.md) for product boundaries and [`docs/architecture.md`](docs/architecture.md) for system design.
 
+## Storage
+
+Persistence sits behind repository interfaces, with two adapters: a JSON document for local
+development, and the PostgreSQL schema in [`apps/api/migrations`](apps/api/migrations) for anything
+larger. Which one a process talks to is explicit configuration — `STORAGE_ADAPTER` has to name it in
+production, and the JSON adapter is refused for a multi-instance production deployment rather than
+warned about, because a file is atomic only within one process: instances overwrite each other and both
+take the lease that is supposed to keep one worker in charge of the schedule.
+
+Every repository method is one unit of work, so an authoritative replacement lands whole — a traded pick
+that returns to its original owner disappears from Sleeper's response entirely, and the league's
+transfers are deleted and reinserted together rather than leaving it showing its old owner forever.
+Sleeper ids and snapshot ids are keys, observations are append-only, a recommendation cites the scoring
+observation and forecast that produced it through foreign keys that make citing another league's rules
+impossible to store, and retention deletes a league's data only once it has been archived and no account
+links it. See [storage](docs/storage.md).
+
+The procedures for backup, restore, migration rollback and point-in-time recovery are in
+[data durability](docs/data-durability.md). They are a precondition rather than an operational nicety:
+accounts, sessions, weekly and roster history, forecasts and the advice given under them exist only in
+this database, and the first migration is the one that starts storing them.
+
 ## League synchronization
 
 Connected leagues are synchronized by one background worker rather than by whoever happens to open a

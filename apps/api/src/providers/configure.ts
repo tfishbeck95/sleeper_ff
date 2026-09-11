@@ -1,7 +1,10 @@
 import { resolve } from 'node:path';
 import type { ScoringRules } from '@sleeper/domain';
 import { interpretLeagueRules } from '@sleeper/domain';
-import type { JsonStore } from '../store.js';
+import type { LeagueRepository, PlayerRepository } from '../storage/repositories.js';
+
+/** Ingestion reads the live leagues' rules and resolves identities against the shared directory. */
+type ProjectionFeedRepository = LeagueRepository & PlayerRepository;
 import { FileFeedRepository, ProjectionFeedStore } from './feed-store.js';
 import { ProjectionIngestionService } from './ingest.js';
 import { NflverseReferenceProvider } from './nflverse.js';
@@ -85,7 +88,7 @@ export interface ConfigureOptions {
  * and in a single-tenant deployment every connected league is asking the same question of the source.
  * A deployment serving materially different rule sets should pass its own accessor per league.
  */
-export function configureProjectionFeed(store: JsonStore, options: ConfigureOptions = {}): ProjectionFeedRuntime | null {
+export function configureProjectionFeed(store: ProjectionFeedRepository, options: ConfigureOptions = {}): ProjectionFeedRuntime | null {
   const env = options.env ?? process.env;
   if (!projectionFeedEnabled(env)) return null;
 
@@ -112,7 +115,7 @@ export function configureProjectionFeed(store: JsonStore, options: ConfigureOpti
  * assessed against rules no commissioner actually set would report a gap this league does not have,
  * or hide one it does.
  */
-async function liveScoringRules(store: JsonStore): Promise<ScoringRules | null> {
+async function liveScoringRules(store: ProjectionFeedRepository): Promise<ScoringRules | null> {
   for (const league of await store.allLeagues()) {
     const rules = interpretLeagueRules(league);
     if (rules.scoring.actionable) return rules.scoring;
