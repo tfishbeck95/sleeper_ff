@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b tsconfig.build.json && vite build",
     "typecheck": "tsc -b --pretty false",
     "test": "tsx --conditions=@sleeper/source --tsconfig tsconfig.json --test src/dashboard/*.test.tsx"
   },
