@@ -19,3 +19,11 @@
 # inert placeholder in the following commit, but the scan reads history — correctly, since a secret is
 # compromised from the commit that introduced it — so removing it from the tip does not clear it.
 0e62ff88c1b2527790f11e242119d58d13119d30:apps/api/src/log.test.ts:generic-api-key:30
+
+# A scrypt salt in the end-to-end stack's fixture account (`Add PostgreSQL storage and E2E coverage`).
+# The line hashes the literal password on the line above it, so what was flagged is the salt — sixteen
+# hex characters, chosen to be obviously inert, feeding a hash the test suite hands to a throwaway
+# process it starts and then kills. A salt is not a secret in the first place: it is stored beside the
+# hash by design, and this one guards a password that is printed in the same file. It authenticates
+# nothing, here or anywhere.
+fa4d5a9833796f62d3f3ac6c056dfde46a3a6bac:tests/support/stack.mjs:generic-api-key:15
