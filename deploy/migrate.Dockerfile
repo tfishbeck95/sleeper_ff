@@ -18,8 +18,10 @@ LABEL org.opencontainers.image.title="Huddle migrations" \
       org.opencontainers.image.description="Applies and rolls back the Huddle PostgreSQL schema" \
       org.opencontainers.image.source="https://github.com/tfishbeck95/sleeper_ff"
 
-# The alpine image has no bash, and the scripts use arrays.
-RUN apk add --no-cache bash
+# The alpine image has no bash, and the scripts use arrays. The upgrade in the same layer brings the
+# base image's own packages up to date: between an Alpine security release and upstream's next
+# rebuild, a tagged image carries packages whose fixed versions are already published.
+RUN apk --no-cache upgrade && apk add --no-cache bash
 
 COPY apps/api/migrations /migrations
 USER postgres

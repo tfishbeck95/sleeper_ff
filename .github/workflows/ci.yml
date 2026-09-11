@@ -265,6 +265,17 @@ jobs:
           docker run --rm --entrypoint sh huddle-api:ci -c '! find /app/apps/api/dist /app/packages -name "*.ts" ! -name "*.d.ts" | grep .'
           test "$(docker run --rm --entrypoint id huddle-api:ci -u)" != "0"
 
+      # Asserted rather than assumed, for every image that has a user to get wrong. The web image
+      # steps up to root to patch its packages and back down again; this is what catches it if the
+      # step back down ever stops working.
+      - name: Every image runs as an unprivileged user
+        run: |
+          for image in huddle-api:ci huddle-web:ci huddle-migrate:ci; do
+            uid=$(docker run --rm --entrypoint id "$image" -u)
+            echo "$image runs as uid $uid"
+            test "$uid" != "0"
+          done
+
       # The refusals are the product: an image that starts without a named storage adapter, or with a
       # plain-http origin in production, is an image that would have started wrong in production.
       - name: The image refuses an incomplete configuration
@@ -304,9 +315,19 @@ jobs:
       # The images, not the lockfile. Most of what is in one of these came from a base image — the
       # Alpine and nginx layers, their OpenSSL, their libc — and none of it appears in any manifest
       # this repository has. It is also the part that goes stale fastest: a base image published two
-      # months ago is two months of advisories behind, which is what the weekly run above exists to
-      # notice.
+      # months ago is two months of advisories behind.
+      #
+      # Blocking on `main` and on the weekly run; reporting on a pull request. The line is what a
+      # change can act on: a lockfile advisory is fixed by the diff that introduces it, so the
+      # dependency scan above blocks everywhere. A base-image advisory is not — it appears the day
+      # Alpine publishes a fix and disappears the day upstream rebuilds, and no author can do
+      # anything about it from inside their pull request. Blocking there turns every unrelated
+      # change red for days at a time, which is how a scanner stops being read at all. So it is not
+      # silent and it is not a wall: the finding is printed on every run, the images are patched at
+      # build time by the `apk upgrade` in each Dockerfile, and the scheduled run is where somebody
+      # has to actually deal with what is left.
       - name: Images carry no known high or critical vulnerability
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
           fail=0
           for image in huddle-api:ci huddle-migrate:ci huddle-web:ci; do

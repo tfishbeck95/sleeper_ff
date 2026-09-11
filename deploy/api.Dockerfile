@@ -88,6 +88,15 @@ COPY --from=build --chown=root:root /app/apps/api/dist ./apps/api/dist
 # image: see deploy/migrate.Dockerfile.
 COPY --chown=root:root apps/api/migrations ./apps/api/migrations
 
+# The base image's own packages, brought up to date.
+#
+# A tag alone is not enough: `node:22-alpine` is rebuilt on its own cadence, so between an Alpine
+# security release and upstream's next rebuild the image carries packages with fixed versions already
+# published — openssl and libexpat are the recurring ones. This is the part of that gap we control,
+# and it is why the image scan in CI has something to pass. It runs while this stage is still root,
+# before the USER below.
+RUN apk --no-cache upgrade
+
 # The one path the process writes to. Creating it here, owned by the user that runs, is what makes a
 # fresh named volume mounted over it writable: Docker copies the image directory's ownership onto an
 # empty volume, and a volume it did not initialize from anywhere lands root-owned and unwritable.
