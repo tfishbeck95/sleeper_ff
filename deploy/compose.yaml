@@ -10,12 +10,9 @@
 # instances are told they do not, that the forecast credential reaches the worker and nothing else, and
 # that stopping the stack drains rather than kills.
 #
-# **The API and worker will refuse to start against PostgreSQL until the adapter exists.** The schema
-# in `apps/api/migrations` is real and this stack applies it, but `createRepository` has no PostgreSQL
-# implementation behind it yet and says so at startup rather than failing on the first query in front of
-# a user. Until it lands, `docker compose --profile single up single` runs the supported single-instance
-# profile — one combined process on the JSON adapter with a persistent volume — and the services below
-# are the shape the deployment takes the moment the adapter is in. See docs/storage.md.
+# The PostgreSQL adapter uses the versioned relational schema. Migrations must finish before either
+# application process starts. See docs/storage.md for its initial throughput limits and
+# docs/testing.md for the isolated full-stack suite and post-deployment staging smoke check.
 #
 # Every variable is assigned to a service explicitly rather than through a shared env_file, so this file
 # is also the answer to which component holds which secret. The API is not given the forecast key. The
@@ -180,7 +177,7 @@ services:
     restart: unless-stopped
 
   # --- The supported single-instance profile ----------------------------------------------------
-  # One process, the JSON adapter, one volume. This is what runs today, and what an installation with a
+  # One process, the JSON adapter, one volume. This remains useful for an installation with a
   # single instance should run in production: there is nothing to coordinate, so there is no reason to
   # run two processes or a database. Start it by naming the service, so the PostgreSQL-backed services
   # above — which publish the same port — are not started alongside it:

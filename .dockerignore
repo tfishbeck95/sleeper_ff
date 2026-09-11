@@ -54,3 +54,7 @@ README.md
 **/README.md
 deploy/compose.yaml
 deploy/compose.staging.yaml
+tests/
+playwright.config.mjs
+playwright-report/
+test-results/

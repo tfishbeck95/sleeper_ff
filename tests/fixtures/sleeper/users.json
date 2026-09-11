@@ -1,0 +1,86 @@
+[
+  {
+    "user_id": "910000000000000001",
+    "username": "fixture_user_001",
+    "display_name": "Fixture User 001",
+    "avatar": null
+  },
+  {
+    "user_id": "910000000000000002",
+    "username": "fixture_user_002",
+    "display_name": "Fixture User 002",
+    "avatar": null
+  },
+  {
+    "user_id": "910000000000000003",
+    "username": "fixture_user_003",
+    "display_name": "Fixture User 003",
+    "avatar": null
+  },
+  {
+    "user_id": "910000000000000004",
+    "username": "fixture_user_004",
+    "display_name": "Fixture User 004",
+    "avatar": null
+  },
+  {
+    "user_id": "910000000000000005",
+    "username": "fixture_user_005",
+    "display_name": "Fixture User 005",
+    "avatar": null
+  },
+  {
+    "user_id": "910000000000000006",
+    "username": "fixture_user_006",
+    "display_name": "Fixture User 006",
+    "avatar": null
+  },
+  {
+    "user_id": "910000000000000007",
+    "username": "fixture_user_007",
+    "display_name": "Fixture User 007",
+    "avatar": null
+  },
+  {
+    "user_id": "910000000000000008",
+    "username": "fixture_user_008",
+    "display_name": "Fixture User 008",
+    "avatar": null
+  },
+  {
+    "user_id": "910000000000000009",
+    "username": "fixture_user_009",
+    "display_name": "Fixture User 009",
+    "avatar": null
+  },
+  {
+    "user_id": "910000000000000010",
+    "username": "fixture_user_010",
+    "display_name": "Fixture User 010",
+    "avatar": null
+  },
+  {
+    "user_id": "910000000000000011",
+    "username": "fixture_user_011",
+    "display_name": "Fixture User 011",
+    "avatar": null
+  },
+  {
+    "user_id": "910000000000000012",
+    "username": "fixture_user_012",
+    "display_name": "Fixture User 012",
+    "avatar": null
+  },
+  {
+    "user_id": "910000000000000013",
+    "username": "fixture_user_013",
+    "display_name": "Fixture User 013",
+    "avatar": null
+  },
+  {
+    "user_id": "910000000000000014",
+    "username": "fixture_user_014",
+    "display_name": "Fixture User 014",
+    "avatar": null
+  }
+]

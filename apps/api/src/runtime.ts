@@ -64,17 +64,15 @@ export function loadConfiguration(env: NodeJS.ProcessEnv = process.env, context:
 /**
  * Builds the services. Starts nothing: what runs is the entrypoint's decision.
  *
- * A storage configuration that is valid but cannot be served — `STORAGE_ADAPTER=postgres`, which has a
- * schema and no adapter behind it yet — is reported the same way a bad environment is, with the
- * adapter's own message and `EX_CONFIG`, rather than as an unhandled rejection at the top of an
- * entrypoint. An orchestrator restarting on that loop should be able to read why from one line.
+ * Storage configuration failures are reported with EX_CONFIG. Apply migrations before starting
+ * the API or worker; database readiness is checked by their readiness probes.
  */
 export function createRuntime(configuration: RuntimeConfiguration): Runtime {
   let store: HuddleRepository;
   try { ({ repository: store } = createRepository()); }
   catch (error) { logger.error({ error }, error instanceof Error ? error.message : String(error)); process.exit(78); }
   // Timed at the seam rather than inside each adapter, so the numbers exist for the JSON adapter
-  // today and for the PostgreSQL one the day it lands, without either of them knowing.
+  // and PostgreSQL, without either of them knowing.
   store = measured(store);
   // One client, built from the validated budgets rather than from its own defaults, so every call to
   // Sleeper in this process waits for exactly as long as the deployment said it may.

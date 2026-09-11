@@ -1,0 +1,25 @@
+[
+  {
+    "draft_id": "930000000000000001",
+    "league_id": "920000000000000001",
+    "season": "2018",
+    "status": "complete",
+    "type": "snake",
+    "sport": "nfl",
+    "settings": {
+      "cpu_autopick": 0,
+      "pick_timer": 120,
+      "player_type": 0,
+      "rounds": 15,
+      "slots_bn": 6,
+      "slots_def": 1,
+      "slots_flex": 2,
+      "slots_qb": 1,
+      "slots_rb": 2,
+      "slots_te": 1,
+      "slots_wr": 2,
+      "teams": 12
+    },
+    "metadata": {}
+  }
+]

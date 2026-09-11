@@ -261,6 +261,8 @@ export interface RecommendationQuery {
  * or a reader sees a league with no picks at all.
  */
 export interface SyncWrite {
+  /** A publisher whose lease expired or was replaced must not overwrite a successor's snapshot. */
+  leaseGuard?: { key: string; owner: string; now: string };
   league?: League; users?: User[]; players?: NflPlayer[]; rosters?: Roster[];
   matchups?: Matchup[]; transactions?: Transaction[]; draftPicks?: TradedDraftPick[];
   replaceDraftPicksForLeague?: string;

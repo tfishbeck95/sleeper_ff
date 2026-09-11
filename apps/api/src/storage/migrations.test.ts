@@ -17,7 +17,7 @@ const TABLES: Readonly<Record<string, string>> = {
   traded_draft_pick: '0005', weekly_snapshot: '0005', weekly_snapshot_matchup: '0005',
   forecast_snapshot: '0006', forecast_player: '0006',
   recommendation: '0007', recommendation_explanation: '0007', recommendation_outcome: '0007',
-  sync_run: '0008', resource_freshness: '0008', sync_lease: '0008',
+  sync_run: '0008', resource_freshness: '0008', sync_lease: '0008', dashboard_snapshot: '0010',
 };
 
 test('every migration is paired with a rollback and records itself in the ledger', async () => {

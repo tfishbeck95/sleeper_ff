@@ -69,3 +69,12 @@ test('synchronization persists full scoring, reports differences, disables after
   const recovered = await service.syncLeague('l1', 1);
   assert.equal(recovered.scoring.kind, 'complete-live'); assert.equal(recovered.scoring.synchronizedAt, clock.toISOString());
 });
+
+test('a late publisher cannot overwrite a successor after losing its lease', async () => {
+  const store = new JsonStore(join(await mkdtemp(join(tmpdir(), 'sync-fencing-')), 'data.json'));
+  const now = new Date();
+  await store.acquireLease('publish', 'old-worker', 1_000, new Date(now.getTime() - 2_000));
+  await store.acquireLease('publish', 'new-worker', 60_000, now);
+  await assert.rejects(store.applySync({ leaseGuard: { key: 'publish', owner: 'old-worker', now: now.toISOString() }, freshness: { 'rosters:l1': now.toISOString() } }), /lease lost/);
+  assert.equal(await store.resourceSyncedAt('rosters:l1'), undefined);
+});

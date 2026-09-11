@@ -128,7 +128,7 @@ export function observeSleeperCall(observation: SleeperCallObservation) {
  */
 export function sleeperClient(profile: UpstreamProfile = 'interactive', fetcher?: typeof fetch, env: NodeJS.ProcessEnv = process.env): SleeperClient {
   const budget = upstreamBudgets(env)[profile];
-  return new SleeperClient(fetcher, undefined, {
+  return new SleeperClient(fetcher, env.SLEEPER_API_BASE_URL?.replace(/\/$/, ""), {
     observe: observeSleeperCall,
     timeoutMs: budget.timeoutMs,
     maxRetries: budget.maxAttempts - 1,

@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { PostgresStore } from './postgres.js';
 import { JsonStore } from '../store.js';
 import type { HuddleRepository, RepositoryAdapter } from './repositories.js';
 
@@ -98,19 +99,13 @@ export function describeStorage(configuration: StorageConfiguration): string {
 /**
  * Builds the repository the configuration selects.
  *
- * The PostgreSQL adapter is not implemented. Its schema is, in `apps/api/migrations`, and the contract
- * it has to satisfy is `HuddleRepository` plus the conformance suite in `./contract.ts` — so this
- * refuses at startup, naming both, rather than accepting the configuration and failing on the first
- * query in front of a user.
+ * The PostgreSQL adapter uses the versioned relational schema and implements the same repository
+ * contract as the local adapter. Migrations must finish before application processes start.
  */
 export function createRepository(env: NodeJS.ProcessEnv = process.env): { repository: HuddleRepository; configuration: StorageConfiguration } {
   const configuration = storageConfiguration(env);
   if (configuration.adapter === 'postgres') {
-    throw new StorageConfigurationError(
-      'Refusing to start: STORAGE_ADAPTER=postgres is configured, but no PostgreSQL adapter is implemented yet. '
-      + 'The schema it needs is in apps/api/migrations and the contract it must satisfy is HuddleRepository '
-      + '(apps/api/src/storage/repositories.ts), checked by the conformance suite in apps/api/src/storage/contract.ts.',
-    );
+    return { repository: new PostgresStore(configuration.databaseUrl!), configuration };
   }
   return { repository: new JsonStore(configuration.dataFile!), configuration };
 }

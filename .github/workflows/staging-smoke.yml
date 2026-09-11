@@ -1,0 +1,40 @@
+name: Staging smoke after deployment
+on:
+  deployment_status:
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      STAGING_SMOKE_LOGIN:
+        required: true
+      STAGING_SMOKE_PASSWORD:
+        required: true
+      STAGING_SMOKE_LEAGUE_ID:
+        required: true
+permissions:
+  contents: read
+# Every successful deployment gets a run. Do not cancel an earlier deployment's smoke test.
+jobs:
+  smoke:
+    if: github.event_name != 'deployment_status' || github.event.deployment_status.state == 'success'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        # Use the trusted default-branch smoke harness, not code supplied by a deployment event.
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Exercise deployed staging
+        run: npm run test:smoke
+        env:
+          STAGING_BASE_URL: ${{ vars.STAGING_BASE_URL }}
+          STAGING_SMOKE_WEEK: ${{ vars.STAGING_SMOKE_WEEK }}
+          STAGING_SMOKE_LOGIN: ${{ secrets.STAGING_SMOKE_LOGIN }}
+          STAGING_SMOKE_PASSWORD: ${{ secrets.STAGING_SMOKE_PASSWORD }}
+          STAGING_SMOKE_LEAGUE_ID: ${{ secrets.STAGING_SMOKE_LEAGUE_ID }}

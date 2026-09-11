@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { liveScoring, scoringUnavailable, type ScoringConfiguration } from '@sleeper/domain';
 import type { League, Matchup, Roster, TradedDraftPick, Transaction, User, WeeklySnapshot } from '@sleeper/domain';
 import { SleeperApiError, type SleeperClient, type SleeperDraftPick, type SleeperLeague, type SleeperMatchup, type SleeperRoster, type SleeperTransaction } from '@sleeper/sleeper-client';
@@ -26,7 +27,25 @@ export class LeagueSyncService {
   constructor(private readonly store: LeagueSyncRepository, private readonly client = sleeperClient('interactive'), private readonly logger: SyncLogger = defaultLogger, private readonly now = () => new Date()) {}
   syncLeague(leagueId: string, week: number, force = false): Promise<SyncResult> {
     const existing = this.locks.get(leagueId); if (existing) return existing;
-    const job = this.perform(leagueId, week, force).finally(() => this.locks.delete(leagueId)); this.locks.set(leagueId, job); return job;
+    const job = this.serialized(leagueId, week, force).finally(() => this.locks.delete(leagueId)); this.locks.set(leagueId, job); return job;
+  }
+  /** Interactive reads and scheduler jobs share this lease, even in different processes. */
+  private async serialized(leagueId: string, week: number, force: boolean): Promise<SyncResult> {
+    const key = `league-sync:publish:${leagueId}`, owner = randomUUID();
+    const deadline = Date.now() + 20_000;
+    let joined = false;
+    while (!await this.store.acquireLease(key, owner, 10 * 60_000, this.now())) {
+      joined = true;
+      if (Date.now() >= deadline) throw new SleeperApiError(503, 'Synchronization is already in progress.', 'timeout', true);
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    try {
+      if (joined) {
+        const league = await this.store.league(leagueId);
+        if (league && await this.store.resourceSyncedAt(`matchups:${leagueId}:${league.season}:${week}`)) return { leagueId, synchronizedAt: league.synchronizedAt, refreshed: [], scoring: league.scoring ?? scoringUnavailable() };
+      }
+      return await this.perform(leagueId, week, force, { key, owner, now: this.now().toISOString() });
+    } finally { await this.store.releaseLease(key, owner); }
   }
   /** Used by both the dashboard and background synchronization; never reads the reference file. */
   async synchronizeLeagueMetadata(leagueId: string, at = this.now().toISOString()): Promise<SleeperLeague> {
@@ -45,14 +64,29 @@ export class LeagueSyncService {
     }
   }
   private async stale(key: string, ttl: number, force: boolean) { const value = await this.store.resourceSyncedAt(key); return force || !value || this.now().getTime() - new Date(value).getTime() >= ttl; }
-  private async perform(leagueId: string, week: number, force: boolean): Promise<SyncResult> {
-    const started = Date.now(); const synchronizedAt = this.now().toISOString(); const refreshed: string[] = []; const write: SyncWrite = { freshness: {} };
+  private async perform(leagueId: string, week: number, force: boolean, leaseGuard: { key: string; owner: string; now: string }): Promise<SyncResult> {
+    const started = Date.now(); const synchronizedAt = this.now().toISOString(); const refreshed: string[] = []; const write: SyncWrite = { freshness: {}, leaseGuard };
     try {
       const obtain = async <T>(name: keyof typeof REFRESH_AFTER_MS, key: string, fetch: () => Promise<T>): Promise<T | undefined> => {
         if (!(await this.stale(key, REFRESH_AFTER_MS[name], force))) return undefined;
         const value = await fetch(); write.freshness![key] = synchronizedAt; refreshed.push(name); return value;
       };
-      const rawLeague = await this.synchronizeLeagueMetadata(leagueId, synchronizedAt);
+      // Publish metadata with the roster/matchup replacement, never half a synchronization.
+      let rawLeague: SleeperLeague;
+      try {
+        rawLeague = await this.client.league(leagueId);
+        if (rawLeague.league_id !== leagueId) throw new Error('Sleeper returned a different league.');
+      } catch (error) {
+        const previous = await this.store.league(leagueId);
+        leaseGuard.now = this.now().toISOString();
+        if (previous) await this.store.applySync({ leaseGuard, league: { ...previous, scoring: {
+          ...scoringUnavailable('Live scoring could not be refreshed. Retry synchronization before using rankings.', previous.scoring?.synchronizedAt ?? null),
+          rawSettings: previous.scoring?.rawSettings ?? null, lastAttemptedAt: synchronizedAt,
+        } } });
+        throw error;
+      }
+      write.league = this.league(rawLeague, synchronizedAt);
+      write.freshness![`league:${leagueId}`] = synchronizedAt;
       refreshed.push('league');
       const season = rawLeague.season;
       const scoring = liveScoring(rawLeague.scoring_settings, synchronizedAt);
@@ -75,6 +109,7 @@ export class LeagueSyncService {
         const id = `${leagueId}:${season}:${week}:${synchronizedAt}`;
         write.weeklySnapshot = { id, leagueId, season, week, rosterIds: snapshotRosters.map(v => v.id), matchupIds: snapshotMatchups.map(v => v.id), rosters: snapshotRosters, matchups: snapshotMatchups, scoring, ...source(synchronizedAt) };
       }
+      write.leaseGuard!.now = this.now().toISOString();
       await this.store.applySync(write); await this.store.recordSync(leagueId, 'success', synchronizedAt, Date.now() - started);
       syncRuns.inc({ outcome: 'success' });
       syncDuration.observe({ outcome: 'success' }, (Date.now() - started) / 1000);

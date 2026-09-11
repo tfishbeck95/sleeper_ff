@@ -42,7 +42,7 @@ const anAccount = (id: string, leagueIds: string[] = []) => ({
   id, login: id, passwordHash: 'disabled', sleeperLeagueIds: leagueIds, createdAt: AT,
 });
 const aSession = (idHash: string, userId: string, overrides = {}) => ({
-  idHash, userId, familyId: 'family-1', csrfHashes: [], createdAt: AT,
+  idHash, userId, familyId: '9565c156-fd14-5adf-8580-178576eb699c', csrfHashes: [], createdAt: AT,
   expiresAt: '2026-10-06T14:00:00.000Z', absoluteExpiresAt: '2026-10-07T12:00:00.000Z',
   lastRotatedAt: AT, lastSeenAt: AT, ...overrides,
 });
@@ -110,14 +110,14 @@ export function repositoryContract(name: string, create: () => Promise<HuddleRep
     const store = await create();
     await store.applySync({ league: aLeague('l1') });
     await store.applySync({ league: aLeague('l2', { scoring: liveScoring({ ...EXPECTED_SCORING, rec: 0.5 }, AT) }) });
-    assert.equal(await store.saveRecommendations([anAdvice('l1', 'r1')]), 1);
-    await assert.rejects(store.saveRecommendations([anAdvice('l2', 'r2')]), /not an observation of league l2/,
+    assert.equal(await store.saveRecommendations([anAdvice('l1', '86f801de-3697-58af-8939-08890d36dd6f')]), 1);
+    await assert.rejects(store.saveRecommendations([anAdvice('l2', 'aec7ddeb-64d2-5d7b-b00f-1281d8e0f0ac')]), /not an observation of league l2/,
       "points scored under one commissioner's rules may not rank another league");
-    await assert.rejects(store.saveRecommendations([anAdvice('l1', 'r3', { forecastSnapshotId: 'absent' })]), /not stored/);
-    await assert.rejects(store.saveRecommendations([anAdvice('l1', 'r4', {
+    await assert.rejects(store.saveRecommendations([anAdvice('l1', 'e666e4e9-e0d3-52db-b5fc-67a614c5a60d', { forecastSnapshotId: 'absent' })]), /not stored/);
+    await assert.rejects(store.saveRecommendations([anAdvice('l1', '47d2410e-0ec7-5b63-b78c-b7e6ddc82f3c', {
       explanations: [{ ordinal: 0, kind: 'coverage', label: 'Returns not modelled', detail: 'No st_td.', points: 1.5 }],
     })]), /contributes exactly zero/);
-    await assert.rejects(store.saveRecommendations([anAdvice('l1', 'r5', {
+    await assert.rejects(store.saveRecommendations([anAdvice('l1', 'd3eef2af-3aa8-58f4-b883-5f227d30203a', {
       explanations: [
         { ordinal: 0, kind: 'contribution', label: 'Rushing', detail: '68.2 yards.', points: 6.82 },
         { ordinal: 0, kind: 'risk', label: 'Questionable', detail: 'Limited in practice.' },
@@ -129,17 +129,17 @@ export function repositoryContract(name: string, create: () => Promise<HuddleRep
   test(label('records outcomes as observations rather than edits'), async () => {
     const store = await create();
     await store.applySync({ league: aLeague('l1') });
-    await store.saveRecommendations([anAdvice('l1', 'r1')]);
-    const outcome = { id: 'o1', recommendationId: 'r1', observedAt: '2026-10-13T04:00:00.000Z', resolution: 'followed' as const, projectedPoints: 18.4, actualPoints: 21.7, recordedAt: AT };
+    await store.saveRecommendations([anAdvice('l1', '86f801de-3697-58af-8939-08890d36dd6f')]);
+    const outcome = { id: '59002135-3099-5c1a-814e-247bd7f0a400', recommendationId: '86f801de-3697-58af-8939-08890d36dd6f', observedAt: '2026-10-13T04:00:00.000Z', resolution: 'followed' as const, projectedPoints: 18.4, actualPoints: 21.7, recordedAt: AT };
     await store.recordRecommendationOutcome(outcome);
-    await store.recordRecommendationOutcome({ ...outcome, id: 'o2', actualPoints: 99 });
-    assert.deepEqual((await store.recommendationOutcomes('r1')).map(value => value.actualPoints), [21.7],
+    await store.recordRecommendationOutcome({ ...outcome, id: '356c2204-0f18-521b-b312-0fb84205a62a', actualPoints: 99 });
+    assert.deepEqual((await store.recommendationOutcomes('86f801de-3697-58af-8939-08890d36dd6f')).map(value => value.actualPoints), [21.7],
       're-recording the same observation is not a rewrite');
     // A stat correction is a later observation, and both are kept.
-    await store.recordRecommendationOutcome({ ...outcome, id: 'o3', observedAt: '2026-10-14T04:00:00.000Z', actualPoints: 20.9 });
-    assert.equal((await store.recommendationOutcomes('r1')).length, 2);
-    await assert.rejects(store.recordRecommendationOutcome({ ...outcome, id: 'o4', recommendationId: 'absent' }), /unknown recommendation/);
-    await assert.rejects(store.recordRecommendationOutcome({ ...outcome, id: 'o5', observedAt: AT, actualPoints: null }), /records no scored points/);
+    await store.recordRecommendationOutcome({ ...outcome, id: '2a8184e9-2c33-5f62-9aa2-33276e0aa3a4', observedAt: '2026-10-14T04:00:00.000Z', actualPoints: 20.9 });
+    assert.equal((await store.recommendationOutcomes('86f801de-3697-58af-8939-08890d36dd6f')).length, 2);
+    await assert.rejects(store.recordRecommendationOutcome({ ...outcome, id: 'ebd63108-bfcf-5b02-a929-6a66b3cd6220', recommendationId: 'absent' }), /unknown recommendation/);
+    await assert.rejects(store.recordRecommendationOutcome({ ...outcome, id: '7c9ade98-f7fb-512f-a199-5b37b006e2c5', observedAt: AT, actualPoints: null }), /records no scored points/);
   });
 
   test(label('keeps the forecast a retained recommendation cites'), async () => {
@@ -148,7 +148,7 @@ export function repositoryContract(name: string, create: () => Promise<HuddleRep
     await store.saveForecastSnapshot(aForecast('cited', { sourceUpdatedAt: '2026-01-01T00:00:00.000Z', ingestedAt: '2026-01-01T00:05:00.000Z' }));
     await store.saveForecastSnapshot(aForecast('uncited', { sourceUpdatedAt: '2026-01-02T00:00:00.000Z', ingestedAt: '2026-01-02T00:05:00.000Z' }));
     await store.saveForecastSnapshot(aForecast('newest', { ingestedAt: '2026-10-06T06:05:00.000Z' }));
-    await store.saveRecommendations([anAdvice('l1', 'r1', { forecastSnapshotId: 'cited' })]);
+    await store.saveRecommendations([anAdvice('l1', '86f801de-3697-58af-8939-08890d36dd6f', { forecastSnapshotId: 'cited' })]);
     assert.equal(await store.pruneForecastSnapshots('2026-06-01T00:00:00.000Z'), 1);
     assert.ok(await store.forecastSnapshot('cited'), 'a citation nothing can check is worse than the storage it saves');
     assert.ok(await store.forecastSnapshot('newest'), 'the newest ingestion for a week is always kept');
@@ -158,6 +158,7 @@ export function repositoryContract(name: string, create: () => Promise<HuddleRep
 
   test(label('resolves one external identity to one player, or to nothing'), async () => {
     const store = await create();
+    await store.applySync({ players: ['4034', '5000'].map(id => ({ id, firstName: 'Player', lastName: id, fullName: `Player ${id}`, team: null, position: 'RB', fantasyPositions: ['RB'], status: null, sourceUpdatedAt: null, synchronizedAt: AT })) });
     const alias = { source: 'sportsdataio', aliasKey: '17539', playerId: '4034', kind: 'cross-id' as const, observedAt: AT };
     assert.equal(await store.savePlayerAliases('sportsdataio', [alias]), 1);
     await assert.rejects(store.savePlayerAliases('sportsdataio', [alias, { ...alias, playerId: '5000' }]), /both 4034 and 5000/);
@@ -174,6 +175,7 @@ export function repositoryContract(name: string, create: () => Promise<HuddleRep
 
   test(label('keeps roster history as observations, and thins it by week'), async () => {
     const store = await create();
+    await store.applySync({ league: aLeague('l1') });
     const observation = (rosterId: number, at: string) => ({
       id: `l1:${rosterId}:${at}`, leagueId: 'l1', rosterId, season: '2026', week: 5, observedAt: at,
       ownerId: `u${rosterId}`, coOwnerIds: [], playerIds: ['4034'], starterIds: ['4034'], reserveIds: [], taxiIds: [], settings: {},
@@ -204,33 +206,33 @@ export function repositoryContract(name: string, create: () => Promise<HuddleRep
 
   test(label('links a Sleeper account, and reports who links a league'), async () => {
     const store = await create();
-    await store.saveApplicationUser(anAccount('user-1'));
-    await store.saveApplicationUser(anAccount('user-2'));
-    await store.linkSleeperAccount({ userId: 'user-1', sleeperUserId: 'u1', sleeperUsername: 'manager', leagueIds: ['l1', 'l1', 'l2'], linkedAt: AT });
-    await store.linkSleeperAccount({ userId: 'user-2', sleeperUserId: 'u2', sleeperUsername: 'other', leagueIds: ['l2'], linkedAt: AT });
-    const link = (await store.sleeperAccount('user-1'))!;
+    await store.saveApplicationUser(anAccount('1e1e0383-c29c-5351-9618-324be2752ba5'));
+    await store.saveApplicationUser(anAccount('254b8b14-f79d-5523-b320-9d636be12e3a'));
+    await store.linkSleeperAccount({ userId: '1e1e0383-c29c-5351-9618-324be2752ba5', sleeperUserId: 'u1', sleeperUsername: 'manager', leagueIds: ['l1', 'l1', 'l2'], linkedAt: AT });
+    await store.linkSleeperAccount({ userId: '254b8b14-f79d-5523-b320-9d636be12e3a', sleeperUserId: 'u2', sleeperUsername: 'other', leagueIds: ['l2'], linkedAt: AT });
+    const link = (await store.sleeperAccount('1e1e0383-c29c-5351-9618-324be2752ba5'))!;
     assert.equal(link.sleeperUsername, 'manager');
     assert.deepEqual(link.leagueIds, ['l1', 'l2'], 'a league is linked once');
-    assert.deepEqual(await store.accountsLinkingLeague('l2'), ['user-1', 'user-2']);
+    assert.deepEqual(await store.accountsLinkingLeague('l2'), ['1e1e0383-c29c-5351-9618-324be2752ba5', '254b8b14-f79d-5523-b320-9d636be12e3a']);
     assert.deepEqual((await store.linkedLeagueIds()).sort(), ['l1', 'l2']);
     await assert.rejects(store.linkSleeperAccount({ userId: 'absent', sleeperUserId: 'u3', sleeperUsername: 'x', leagueIds: [], linkedAt: AT }), /unknown application account/);
-    await store.unlinkSleeperAccount('user-1');
-    assert.equal(await store.sleeperAccount('user-1'), undefined);
-    assert.deepEqual(await store.accountsLinkingLeague('l2'), ['user-2']);
+    await store.unlinkSleeperAccount('1e1e0383-c29c-5351-9618-324be2752ba5');
+    assert.equal(await store.sleeperAccount('1e1e0383-c29c-5351-9618-324be2752ba5'), undefined);
+    assert.deepEqual(await store.accountsLinkingLeague('l2'), ['254b8b14-f79d-5523-b320-9d636be12e3a']);
   });
 
   test(label('rotates and revokes sessions as whole families'), async () => {
     const store = await create();
-    await store.saveApplicationUser(anAccount('user-1'));
-    await store.saveSession(aSession('hash-1', 'user-1'));
-    await store.rotateSession('hash-1', aSession('hash-2', 'user-1'), '2026-10-06T12:30:00.000Z');
+    await store.saveApplicationUser(anAccount('1e1e0383-c29c-5351-9618-324be2752ba5'));
+    await store.saveSession(aSession('hash-1', '1e1e0383-c29c-5351-9618-324be2752ba5'));
+    await store.rotateSession('hash-1', aSession('hash-2', '1e1e0383-c29c-5351-9618-324be2752ba5'), '2026-10-06T12:30:00.000Z');
     assert.equal((await store.session('hash-1'))!.supersededAt, '2026-10-06T12:30:00.000Z', 'the predecessor is retired in the same write');
     assert.ok(await store.session('hash-2'));
-    await store.revokeSessionFamily('family-1', 'reuse-detected', AT);
+    await store.revokeSessionFamily('9565c156-fd14-5adf-8580-178576eb699c', 'reuse-detected', AT);
     assert.equal((await store.session('hash-1'))!.revokedReason, 'reuse-detected');
     assert.equal((await store.session('hash-2'))!.revokedReason, 'reuse-detected');
     // Nothing that can still authenticate is swept.
-    await store.saveSession(aSession('hash-3', 'user-1', { absoluteExpiresAt: '2027-10-06T12:00:00.000Z', expiresAt: '2027-10-06T12:00:00.000Z' }));
+    await store.saveSession(aSession('hash-3', '1e1e0383-c29c-5351-9618-324be2752ba5', { absoluteExpiresAt: '2027-10-06T12:00:00.000Z', expiresAt: '2027-10-06T12:00:00.000Z' }));
     const removed = await store.pruneSessions(Date.parse('2026-10-20T12:00:00.000Z'), 7 * 24 * 3_600_000);
     assert.equal(removed, 2);
     assert.ok(await store.session('hash-3'));
@@ -241,14 +243,14 @@ export function repositoryContract(name: string, create: () => Promise<HuddleRep
     await store.applySync({ league: aLeague('l1'), rosters: [aRoster('l1', 1)], players: [{ id: '4034', firstName: 'Player', lastName: 'One', fullName: 'Player One', team: 'KC', position: 'RB', fantasyPositions: ['RB'], status: null, sourceUpdatedAt: null, synchronizedAt: AT }], freshness: { 'rosters:l1': AT, 'players:nfl': AT } });
     await store.applySync({ league: aLeague('l2'), rosters: [aRoster('l2', 1)], freshness: { 'rosters:l2': AT } });
     await store.recordRosterObservations([{ id: `l1:1:${AT}`, leagueId: 'l1', rosterId: 1, season: '2026', week: 5, observedAt: AT, ownerId: 'u1', coOwnerIds: [], playerIds: ['4034'], starterIds: ['4034'], reserveIds: [], taxiIds: [], settings: {} }]);
-    await store.saveRecommendations([anAdvice('l1', 'r1')]);
-    await store.recordRecommendationOutcome({ id: 'o1', recommendationId: 'r1', observedAt: AT, resolution: 'unknown', recordedAt: AT });
+    await store.saveRecommendations([anAdvice('l1', '86f801de-3697-58af-8939-08890d36dd6f')]);
+    await store.recordRecommendationOutcome({ id: '59002135-3099-5c1a-814e-247bd7f0a400', recommendationId: '86f801de-3697-58af-8939-08890d36dd6f', observedAt: AT, resolution: 'unknown', recordedAt: AT });
     await store.pruneLeague('l1');
     assert.equal(await store.league('l1'), undefined);
     assert.equal((await store.rosters('l1')).length, 0);
     assert.equal((await store.rosterHistory('l1')).length, 0);
     assert.equal((await store.recommendations({ leagueId: 'l1' })).length, 0);
-    assert.equal((await store.recommendationOutcomes('r1')).length, 0, 'outcomes follow the advice they grade');
+    assert.equal((await store.recommendationOutcomes('86f801de-3697-58af-8939-08890d36dd6f')).length, 0, 'outcomes follow the advice they grade');
     assert.equal((await store.scoringSnapshots('l1')).length, 0);
     assert.equal(await store.resourceSyncedAt('rosters:l1'), undefined);
     assert.equal((await store.allPlayers()).length, 1, 'the shared directory belongs to every league');
@@ -259,6 +261,7 @@ export function repositoryContract(name: string, create: () => Promise<HuddleRep
 
   test(label('records what each synchronization attempt did'), async () => {
     const store = await create();
+    await store.connectLeague('l1', { at: AT });
     await store.recordSync('l1', 'success', AT, 1840);
     await store.recordSync('l1', 'failed', '2026-10-06T12:30:00.000Z', 900, 'rate_limit');
     await store.recordSyncRun({

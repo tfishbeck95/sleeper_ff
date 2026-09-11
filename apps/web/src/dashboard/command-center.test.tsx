@@ -23,12 +23,12 @@ test('the coordinated query loads all sections in one authenticated, abortable r
   try {
     globalThis.fetch = async (url, options) => {
       calls++;
-      assert.equal(String(url), '/api/command-center/1234?week=8&maxValueGap=.4&maxRisk=.3');
+      assert.equal(String(url), '/api/command-center/1234?week=8&maxValueGap=0.4&maxRisk=0.3');
       assert.equal(options?.credentials, 'include');
       assert.ok(options?.signal);
       return new Response(JSON.stringify(command));
     };
-    const loaded = await loadCommandCenter('1234', 8, new AbortController().signal, { maxValueGap: '.4', maxRisk: '.3' });
+    const loaded = await loadCommandCenter('1234', 8, new AbortController().signal, { maxValueGap: '0.4', maxRisk: '0.3' });
     assert.equal(calls, 1);
     assert.deepEqual(loaded, JSON.parse(JSON.stringify(command)));
     assert.equal(fromCommandCenter(loaded).scoring, loaded.sections.scoring.data);
@@ -42,10 +42,10 @@ test('controlled panels render aggregated reports and errors without waiting for
   const waiver = renderToStaticMarkup(<WaiverPlanner {...props} shared={{ report: command.sections.waivers.data, error: '', loading: false, recheck: () => {} }}/>);
   assert.doesNotMatch(waiver, /Checking league ownership/);
   assert.match(waiver, /Ranked add \/ drop pairs/);
-  const trade = renderToStaticMarkup(<TradePlanner {...props} shared={{ report: null, error: 'Trade analysis failed.', loading: false, recheck: () => {}, bounds: { maxValueGap: '.4', maxRisk: '.3' }, onBounds: () => {} }}/>);
+  const trade = renderToStaticMarkup(<TradePlanner {...props} shared={{ report: null, error: 'Trade analysis failed.', loading: false, recheck: () => {}, bounds: { maxValueGap: '0.4', maxRisk: '0.3' }, onBounds: () => {} }}/>);
   assert.match(trade, /Trade analysis failed/);
   assert.doesNotMatch(trade, /Evaluating every roster/);
-  assert.match(trade, /value=".4" selected/);
+  assert.match(trade, /value="0\.4" selected/);
   const html = renderToStaticMarkup(<CommandCenterStatus command={command}/>);
   for (const [name, section] of Object.entries(command.sections)) assert.ok(html.includes(`${name}: ${section.state}`));
   assert.ok(html.includes(command.provenance.scoringSnapshotId!));

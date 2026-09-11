@@ -96,23 +96,24 @@ export interface StoreShape {
 }
 
 function revoke(session: ApplicationSession | undefined, reason: SessionRevocation, at: string) { if (!session || session.revokedAt) return; session.revokedAt = at; session.revokedReason = reason; }
-const empty = (): StoreShape => ({ snapshots: {}, leagues: {}, users: {}, players: {}, rosters: {}, matchups: {}, transactions: {}, draftPicks: {}, weeklySnapshots: [], freshness: {}, applicationUsers: {}, sessions: {}, syncLog: [], leagueConnections: {}, leases: {}, scoringSnapshots: {}, playerAliases: [], rosterHistory: [], forecastSnapshots: [], recommendations: {}, recommendationOutcomes: [] });
+export const emptyStore = (): StoreShape => ({ snapshots: {}, leagues: {}, users: {}, players: {}, rosters: {}, matchups: {}, transactions: {}, draftPicks: {}, weeklySnapshots: [], freshness: {}, applicationUsers: {}, sessions: {}, syncLog: [], leagueConnections: {}, leases: {}, scoringSnapshots: {}, playerAliases: [], rosterHistory: [], forecastSnapshots: [], recommendations: {}, recommendationOutcomes: [] });
 export class JsonStore implements HuddleRepository {
-  readonly adapter = 'json' as const;
+  readonly adapter: import('./storage/repositories.js').RepositoryAdapter = 'json';
+  protected readonly syncLogLimit: number = 100;
   private writes: Promise<void> = Promise.resolve();
   constructor(private readonly path: string) {}
-  private async read(): Promise<StoreShape> {
-    try { return { ...empty(), ...JSON.parse(await readFile(this.path, 'utf8')) as StoreShape }; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; return empty(); }
+  protected async read(): Promise<StoreShape> {
+    try { return { ...emptyStore(), ...JSON.parse(await readFile(this.path, 'utf8')) as StoreShape }; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; return emptyStore(); }
   }
-  private write(mutator: (data: StoreShape) => void): Promise<void> {
+  protected write(mutator: (data: StoreShape) => void): Promise<void> {
     const operation = this.writes.then(async () => { const data = await this.read(); mutator(data); await mkdir(dirname(this.path), { recursive: true }); const temp = `${this.path}.${process.pid}.tmp`; await writeFile(temp, JSON.stringify(data, null, 2)); await rename(temp, this.path); });
     this.writes = operation.catch(() => undefined); return operation;
   }
   /** Waits for every queued write to land. Writes are serialized, so awaiting the tail awaits them all. */
   async close() { await this.writes; }
   async snapshot(id: string) { return (await this.read()).snapshots[id]; }
-  async save(snapshot: LeagueSnapshot) { await this.write(data => { data.snapshots[snapshot.leagueId] = snapshot; data.syncLog.unshift({ leagueId: snapshot.leagueId, syncedAt: snapshot.lastSyncedAt, status: 'success' }); data.syncLog = data.syncLog.slice(0, 100); }); }
+  async save(snapshot: LeagueSnapshot) { await this.write(data => { data.snapshots[snapshot.leagueId] = snapshot; data.syncLog.unshift({ leagueId: snapshot.leagueId, syncedAt: snapshot.lastSyncedAt, status: 'success' }); data.syncLog = data.syncLog.slice(0, this.syncLogLimit); }); }
   async resourceSyncedAt(key: string) { return (await this.read()).freshness[key]; }
   async league(id: string) { return (await this.read()).leagues[id]; }
   async applicationUserByLogin(login: string) { return Object.values((await this.read()).applicationUsers).find(user => user.login === login); }
@@ -355,6 +356,11 @@ export class JsonStore implements HuddleRepository {
     return { league: data.leagues[leagueId], rosters: Object.values(data.rosters).filter(r => r.leagueId === leagueId), players: Object.values(data.players), users: Object.values(data.users), tradedPicks: Number.isFinite(pickAge) && pickAge >= -5 * 60_000 && pickAge <= 10 * 60_000 ? Object.values(data.draftPicks).filter(p => p.leagueId === leagueId) : undefined };
   }
   async applySync(write: SyncWrite) { await this.write(data => {
+    if (write.leaseGuard) {
+      const lease = data.leases[write.leaseGuard.key];
+      if (!lease || lease.owner !== write.leaseGuard.owner || Date.parse(lease.expiresAt) <= Date.parse(write.leaseGuard.now))
+        throw new Error('Synchronization lease lost before publication.');
+    }
     const upsert = <T extends { id: string }>(target: Record<string, T>, values?: T[]) => { for (const value of values ?? []) target[value.id] = value; };
     if (write.league) {
       data.leagues[write.league.id] = write.league;
@@ -652,7 +658,7 @@ export class JsonStore implements HuddleRepository {
         ...(run.nextAttemptAt ? { nextAttemptAt: run.nextAttemptAt } : {}),
         ...(run.workerId ? { workerId: run.workerId } : {}),
       });
-      data.syncLog = data.syncLog.slice(0, 100);
+      data.syncLog = data.syncLog.slice(0, this.syncLogLimit);
     });
   }
   async syncRuns(query: SyncRunQuery = {}) {

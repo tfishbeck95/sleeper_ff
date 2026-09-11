@@ -1,0 +1,68 @@
+{
+  "source": "https://api.sleeper.app/v1",
+  "sanitizerVersion": 1,
+  "captureKind": "live-http",
+  "note": "Account/league/draft/transaction ids remapped; names synthetic; avatars and arbitrary metadata removed. NFL player fields are public. Players are a subset.",
+  "responses": [
+    {
+      "file": "league.json",
+      "endpoint": "/league/{leagueId}",
+      "recordedAt": "2026-09-11T17:25:06.031Z",
+      "sha256": "b6225d9774b8d85b1b20be1be9789f25f538c5e1f8a3ddb260c12054709db7c2"
+    },
+    {
+      "file": "users.json",
+      "endpoint": "/league/{leagueId}/users",
+      "recordedAt": "2026-09-11T17:25:06.031Z",
+      "sha256": "5d8ce2d3d35ed1f042c9aa2f9193f82bf6526381c39c9930aed3edead94bb428"
+    },
+    {
+      "file": "rosters.json",
+      "endpoint": "/league/{leagueId}/rosters",
+      "recordedAt": "2026-09-11T17:25:06.031Z",
+      "sha256": "34d3515cec5493007d4c04bf2c1fe6fbed400f5e603cab6b38c7b69000065ad4"
+    },
+    {
+      "file": "matchups.json",
+      "endpoint": "/league/{leagueId}/matchups/{week}",
+      "recordedAt": "2026-09-11T17:25:06.031Z",
+      "sha256": "2a7ac9cee6511c56ea644732bbb7efb5ad9c02436fcbb0ef0cfbe6156f6a7656"
+    },
+    {
+      "file": "transactions.json",
+      "endpoint": "/league/{leagueId}/transactions/{week}",
+      "recordedAt": "2026-09-11T17:25:06.031Z",
+      "sha256": "fd3d742c05e34fc6f61499296fe6988ba86c8bc722af3801d952b89cc15b00d6"
+    },
+    {
+      "file": "drafts.json",
+      "endpoint": "/league/{leagueId}/drafts",
+      "recordedAt": "2026-09-11T17:25:06.031Z",
+      "sha256": "dc3c7bebaca132cce7d246dee0226d45869ff3be0e1c3afc15b716a7da59d768"
+    },
+    {
+      "file": "traded-picks.json",
+      "endpoint": "/league/{leagueId}/traded_picks",
+      "recordedAt": "2026-09-11T17:25:06.031Z",
+      "sha256": "a606aaf8837bd10edfa36768b117b4739471f602bba8599e6e6d24cce206e8bd"
+    },
+    {
+      "file": "user.json",
+      "endpoint": "/user/{userId}",
+      "recordedAt": "2026-09-11T17:25:06.031Z",
+      "sha256": "c98944a20915c8037556d18866cb6e5e3f3836b87d852142d4959a3214dd570b"
+    },
+    {
+      "file": "leagues.json",
+      "endpoint": "/user/{userId}/leagues/nfl/{season}",
+      "recordedAt": "2026-09-11T17:25:06.031Z",
+      "sha256": "e29cfdc2113ad893dfc2a74ee9b0083c40603eece87e07031436fad1ffaa6675"
+    },
+    {
+      "file": "players.json",
+      "endpoint": "/players/nfl",
+      "recordedAt": "2026-09-11T17:25:06.031Z",
+      "sha256": "8bfa696fe5975c2572c7458dca61cd8af65f0aad0f6e1885554ae3f822638967"
+    }
+  ]
+}

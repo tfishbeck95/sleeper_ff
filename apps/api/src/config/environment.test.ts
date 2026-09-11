@@ -203,3 +203,16 @@ test('demo authentication stays a development affordance whatever the flag says'
   assert.equal(validateEnvironment({ NODE_ENV: 'development', ENABLE_DEMO_AUTH: 'true' }).demoEnabled, true);
   assert.equal(validateEnvironment({ NODE_ENV: 'development' }).demoEnabled, false);
 });
+
+test('the dedicated worker needs storage and scheduling configuration, not browser credentials', () => {
+  const configuration = validateEnvironment({ NODE_ENV: 'production', STORAGE_ADAPTER: 'postgres', DATABASE_URL: 'postgres://huddle:fixture@localhost/huddle', SYNC_WORKER_ENABLED: 'true' }, { servesHttp: false });
+  assert.equal(configuration.sync.workerEnabled, true);
+  assert.deepEqual(configuration.webOrigins, []);
+});
+
+test('Sleeper base URL overrides reject credentials and non-HTTP protocols', () => {
+  for (const value of ['file:///tmp/fixture', 'https://secret@host/v1', 'https://host/v1?key=secret', 'not a URL']) {
+    assert.ok(problems({ ...production, SLEEPER_API_BASE_URL: value }).some(p => p.includes('SLEEPER_API_BASE_URL')));
+  }
+  assert.equal(validateEnvironment({ ...production, SLEEPER_API_BASE_URL: 'http://127.0.0.1:4444/v1' }).production, true);
+});

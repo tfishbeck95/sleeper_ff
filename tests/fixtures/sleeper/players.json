@@ -1,0 +1,39 @@
+{
+  "4034": {
+    "player_id": "4034",
+    "first_name": "Christian",
+    "last_name": "McCaffrey",
+    "full_name": "Christian McCaffrey",
+    "position": "RB",
+    "fantasy_positions": [
+      "RB"
+    ],
+    "team": "SF",
+    "status": "Active",
+    "injury_status": null
+  },
+  "4046": {
+    "player_id": "4046",
+    "first_name": "Patrick",
+    "last_name": "Mahomes",
+    "full_name": "Patrick Mahomes",
+    "position": "QB",
+    "fantasy_positions": [
+      "QB"
+    ],
+    "team": "KC",
+    "status": "Active",
+    "injury_status": null
+  },
+  "KC": {
+    "player_id": "KC",
+    "first_name": "Kansas City",
+    "last_name": "Chiefs",
+    "position": "DEF",
+    "fantasy_positions": [
+      "DEF"
+    ],
+    "team": "KC",
+    "injury_status": null
+  }
+}

@@ -341,3 +341,38 @@ jobs:
             echo "::endgroup::"
           done
           exit $fail
+
+  full-stack:
+    name: Compiled HTTPS web, API, worker and PostgreSQL scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: huddle
+          POSTGRES_PASSWORD: huddle-e2e-only
+          POSTGRES_DB: huddle_e2e
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U huddle -d huddle_e2e"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      E2E_DATABASE_URL: postgres://huddle:huddle-e2e-only@127.0.0.1:5432/huddle_e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-stack-test-results
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
