@@ -57,7 +57,11 @@ export class PlayerDirectoryService {
     const refresh = this.refresh().catch(error => { console.error('[players] storage failure', error); });
     if (metadata?.synchronizedAt || Object.keys(players).length) return;
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    try { await Promise.race([refresh, new Promise<void>(resolve => { timeout = setTimeout(resolve, 1_000); timeout.unref(); })]); }
+    // Not unref'd. An unref'd timer does not hold the event loop open, so the budget only elapsed
+    // when something else — a listening server — happened to be holding it; with nothing else
+    // pending, the race never settled at all and this call hung. It is cleared in `finally` either
+    // way, so the most it can hold the loop for is the one second it is meant to wait.
+    try { await Promise.race([refresh, new Promise<void>(resolve => { timeout = setTimeout(resolve, 1_000); })]); }
     finally { clearTimeout(timeout); }
   }
 
