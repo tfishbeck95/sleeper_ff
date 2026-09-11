@@ -88,6 +88,15 @@ COPY --from=build --chown=root:root /app/apps/api/dist ./apps/api/dist
 # image: see deploy/migrate.Dockerfile.
 COPY --chown=root:root apps/api/migrations ./apps/api/migrations
 
+# The base image's own packages, brought up to date.
+#
+# A tag alone is not enough: `node:22-alpine` is rebuilt on its own cadence, so between an Alpine
+# security release and upstream's next rebuild the image carries packages with fixed versions already
+# published — openssl and libexpat are the recurring ones. This is the part of that gap we control,
+# and it is why the image scan in CI has something to pass. It runs while this stage is still root,
+# before the USER below.
+RUN apk --no-cache upgrade
+
 # The one path the process writes to. Creating it here, owned by the user that runs, is what makes a
 # fresh named volume mounted over it writable: Docker copies the image directory's ownership onto an
 # empty volume, and a volume it did not initialize from anywhere lands root-owned and unwritable.
@@ -101,9 +110,11 @@ WORKDIR /app/apps/api
 USER node
 EXPOSE 4000
 
-# A draining instance answers 503 here, which is how an orchestrator learns to stop routing to it
-# before the listener closes. Override the port for the worker, which serves its probe elsewhere.
+# Liveness, not readiness. This check decides whether to *replace* the container, so it must not
+# fail because a database is briefly unreachable — that turns one outage into a restart loop — and it
+# must not fail while the process is draining, which is the process doing what it was asked. The load
+# balancer asks `/health/ready` instead, which is the check that answers both of those with a 503.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "dist/api.js"]

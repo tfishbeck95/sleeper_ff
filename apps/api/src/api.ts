@@ -1,5 +1,6 @@
-import { createRuntime, loadConfiguration, registerShutdown, seed, startHttp } from './runtime.js';
+import { createRuntime, loadConfiguration, registerShutdown, seed, startHttp, startObservability, type Component } from './runtime.js';
 import { GracefulShutdown } from './shutdown.js';
+import { logger } from './log.js';
 
 /**
  * The API process.
@@ -16,10 +17,12 @@ import { GracefulShutdown } from './shutdown.js';
 const configuration = loadConfiguration();
 const runtime = createRuntime(configuration);
 if (configuration.sync.workerEnabled) {
-  console.warn('[api] SYNC_WORKER_ENABLED is not false, but this entrypoint runs no schedule. Set it false here and run the worker entrypoint, or run the combined entrypoint instead.');
+  logger.warn({ component: 'api' }, 'SYNC_WORKER_ENABLED is not false, but this entrypoint runs no schedule. Set it false here and run the worker entrypoint, or run the combined entrypoint instead.');
 }
 
 await seed(runtime);
 const { component } = startHttp(runtime);
-const shutdown = registerShutdown(new GracefulShutdown({ graceMs: configuration.shutdownGraceMs }), [component], runtime);
+const observability = startObservability(runtime);
+const components: Component[] = observability ? [component, observability] : [component];
+const shutdown = registerShutdown(new GracefulShutdown({ graceMs: configuration.shutdownGraceMs }), components, runtime);
 shutdown.listen();

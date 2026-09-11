@@ -1,0 +1,220 @@
+# Alerting rules for an installation that scrapes `/metrics`.
+#
+# These are the same six conditions the worker evaluates itself (see
+# `apps/api/src/observability/alerts.ts`), expressed for a system that can do windows and `for`
+# durations properly. Run one or the other, not both: the built-in monitor exists for an installation
+# with no Prometheus attached, and two of everything is two pages for one problem. Turn the built-in
+# one off by leaving `OPS_ALERT_WEBHOOK` unset — it will still write a log line, which is the record
+# rather than the page.
+#
+# Every rule here has three properties, and a rule that cannot claim all three does not belong:
+# it is actionable and names the runbook step; it describes a symptom rather than a cause; and it is
+# quiet when nothing is wrong. `for` is what buys the third one — a threshold crossed for a duration
+# rather than an instant, so a restart is not an incident.
+#
+# Scrape both processes. The API publishes the request and authentication series; the worker
+# publishes the schedule, forecast and lock series. A rule that reads both is written to tolerate one
+# of them being absent rather than firing when a target goes away — that is the `up` alert's job, and
+# every installation already has one.
+
+groups:
+  - name: huddle
+    rules:
+      # --- Scoring ----------------------------------------------------------------------------
+      # Every ranking in this application is derived from a validated observation of the league's own
+      # scoring rules. When one stops validating the engines refuse to rank rather than guessing, so
+      # the visible symptom is not an error — it is advice that quietly stops being offered.
+      - alert: HuddleScoringUnvalidated
+        expr: huddle_league_scoring_unavailable > 0
+        for: 15m
+        labels:
+          severity: warning
+          runbook: stale-scoring
+        annotations:
+          summary: "Live scoring is unvalidated for {{ $value }} active league(s)"
+          description: >-
+            Their lineup, waiver and trade rankings are refused rather than estimated.
+            See docs/runbook.md#stale-scoring.
+
+      - alert: HuddleScoringStale
+        # Six hours. A commissioner can change scoring mid-week, and a ranking priced against an
+        # observation older than that may be priced against rules that no longer apply.
+        expr: (time() - huddle_league_scoring_oldest_observation_timestamp_seconds) > 21600
+          and huddle_league_scoring_oldest_observation_timestamp_seconds > 0
+        for: 30m
+        labels:
+          severity: warning
+          runbook: stale-scoring
+        annotations:
+          summary: "The oldest scoring observation is {{ $value | humanizeDuration }} old"
+          description: "See docs/runbook.md#stale-scoring."
+
+      # --- Projections ------------------------------------------------------------------------
+      - alert: HuddleForecastStale
+        # Past the retention threshold the feed stops answering requests entirely, so this is an
+        # outage of every ranking rather than a degradation of one.
+        expr: (time() - huddle_forecast_ingested_timestamp_seconds) > 43200
+          and huddle_forecast_ingested_timestamp_seconds > 0
+        for: 15m
+        labels:
+          severity: critical
+          runbook: stale-projections
+        annotations:
+          summary: "The retained forecast feed is {{ $value | humanizeDuration }} old"
+          description: >-
+            Past the staleness threshold the feed stops answering and every ranking reports
+            unavailable. See docs/runbook.md#stale-projections.
+
+      - alert: HuddleForecastSourceNotPublishing
+        # The one that catches a source which keeps answering 200 with an unchanged timestamp.
+        # Ingestion succeeds, the feed looks fresh, and the numbers in it are from last week.
+        expr: (time() - huddle_forecast_source_updated_timestamp_seconds) > 21600
+          and huddle_forecast_source_updated_timestamp_seconds > 0
+        for: 30m
+        labels:
+          severity: warning
+          runbook: stale-projections
+        annotations:
+          summary: "The forecast source's own timestamp is {{ $value | humanizeDuration }} old"
+          description: "Ingestion may be succeeding against a source that has stopped publishing."
+
+      - alert: HuddleForecastIdentityMatchLow
+        expr: huddle_forecast_identity_match_rate < 0.95
+        for: 30m
+        labels:
+          severity: warning
+          runbook: stale-projections
+        annotations:
+          summary: "Only {{ $value | humanizePercentage }} of forecast players resolve to a Sleeper id"
+          description: >-
+            An unmatched player is silently absent from every ranking rather than reported.
+            See docs/runbook.md#stale-projections.
+
+      # --- Synchronization --------------------------------------------------------------------
+      # A streak, never a single failure: Sleeper is a free shared API, a failed attempt is expected,
+      # and the backoff exists so that one does not need a person.
+      - alert: HuddleLeaguesStale
+        expr: huddle_league_sync_stale_leagues > 0
+        for: 30m
+        labels:
+          severity: warning
+          runbook: repeated-sync-failures
+        annotations:
+          summary: "{{ $value }} league(s) have not synchronized recently"
+          description: "See docs/runbook.md#repeated-sync-failures."
+
+      - alert: HuddleNoLeagueSynchronizing
+        expr: (time() - huddle_league_sync_last_success_timestamp_seconds) > 10800
+          and huddle_league_sync_last_success_timestamp_seconds > 0
+        for: 15m
+        labels:
+          severity: critical
+          runbook: repeated-sync-failures
+        annotations:
+          summary: "No league has synchronized for {{ $value | humanizeDuration }}"
+          description: "Every dashboard is serving a snapshot that old. See docs/runbook.md#repeated-sync-failures."
+
+      # --- The worker -------------------------------------------------------------------------
+      # Nothing else notices this. Every API instance keeps serving the last good snapshot perfectly
+      # while the schedule that refreshes it is dead, so a silent worker is an outage that looks like
+      # uptime until somebody sets a lineup from a week-old roster.
+      - alert: HuddleWorkerInactive
+        # Two sweeps at the default interval: one missed is a restart, two is a worker that is gone.
+        expr: (time() - huddle_worker_heartbeat_timestamp_seconds) > 3900
+          and huddle_worker_heartbeat_timestamp_seconds > 0
+        for: 10m
+        labels:
+          severity: critical
+          runbook: worker-inactive
+        annotations:
+          summary: "The schedule has not been claimed for {{ $value | humanizeDuration }}"
+          description: "No league is being refreshed. See docs/runbook.md#worker-inactive."
+
+      - alert: HuddleSweepFallingBehind
+        # A worker that answers its probe while stuck behind a slow upstream is running and not
+        # keeping up. Only the lag separates the two.
+        expr: histogram_quantile(0.9, rate(huddle_worker_sweep_lag_seconds_bucket[1h])) > 300
+        for: 30m
+        labels:
+          severity: warning
+          runbook: worker-inactive
+        annotations:
+          summary: "Sweeps are starting {{ $value | humanizeDuration }} after they are due"
+
+      - alert: HuddleSecondWorkerRunning
+        # One worker is meant to own the schedule, so this is not contention — it is an instance that
+        # `SYNC_WORKER_ENABLED=false` was supposed to have opted out, doubling the upstream load.
+        expr: rate(huddle_lock_contention_total{lease="sweep"}[1h]) > 0
+        for: 1h
+        labels:
+          severity: warning
+          runbook: worker-inactive
+        annotations:
+          summary: "More than one process is trying to own the schedule"
+          description: >-
+            Set SYNC_WORKER_ENABLED=false on every API instance.
+            See docs/runbook.md#worker-inactive.
+
+      # --- Serving ----------------------------------------------------------------------------
+      # A rate with a floor under the denominator: one 500 out of three requests at four in the
+      # morning is not a 33% error rate, and paging on it is how an alert set loses its audience.
+      - alert: HuddleElevated5xx
+        expr: |
+          sum(rate(huddle_http_requests_total{status="5xx"}[5m]))
+            / sum(rate(huddle_http_requests_total[5m])) > 0.05
+          and sum(rate(huddle_http_requests_total[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          runbook: elevated-5xx
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of requests are failing with a 5xx"
+          description: "See docs/runbook.md#elevated-5xx."
+
+      - alert: HuddleElevated5xxCritical
+        expr: |
+          sum(rate(huddle_http_requests_total{status="5xx"}[5m]))
+            / sum(rate(huddle_http_requests_total[5m])) > 0.25
+          and sum(rate(huddle_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          runbook: elevated-5xx
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of requests are failing with a 5xx"
+
+      # --- Storage ----------------------------------------------------------------------------
+      # Distinct from the readiness probe: this is storage failing under load while still answering a
+      # probe, which is the shape a dying disk or an exhausted pool takes.
+      - alert: HuddleStorageFailing
+        expr: sum(rate(huddle_storage_failures_total[5m])) > 0.01
+        for: 10m
+        labels:
+          severity: critical
+          runbook: storage-failures
+        annotations:
+          summary: "Repository operations are failing ({{ $value }}/s)"
+          description: "See docs/runbook.md#storage-failures."
+
+      - alert: HuddleStorageSlow
+        expr: histogram_quantile(0.99, sum by (le) (rate(huddle_storage_query_duration_seconds_bucket[5m]))) > 1
+        for: 15m
+        labels:
+          severity: warning
+          runbook: storage-failures
+        annotations:
+          summary: "Storage p99 is {{ $value | humanizeDuration }}"
+
+      # --- Authentication ---------------------------------------------------------------------
+      # Not in the six, and here anyway: a replayed session id is the one signal in this application
+      # that means a credential is in somebody else's hands rather than that something is slow.
+      - alert: HuddleSessionReuseDetected
+        expr: increase(huddle_auth_failures_total{reason="reuse_detected"}[15m]) > 0
+        labels:
+          severity: critical
+          runbook: session-reuse
+        annotations:
+          summary: "A retired session id was replayed; its family has been revoked"
+          description: >-
+            Past the rotation grace window a retired id can only be a copy.
+            See docs/runbook.md#session-reuse.

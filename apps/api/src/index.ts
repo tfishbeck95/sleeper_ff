@@ -1,4 +1,4 @@
-import { createRuntime, loadConfiguration, registerShutdown, seed, startHttp, startScheduledWork, type Component } from './runtime.js';
+import { createRuntime, loadConfiguration, registerShutdown, seed, startHttp, startObservability, startScheduledWork, type Component } from './runtime.js';
 import { GracefulShutdown } from './shutdown.js';
 
 /**
@@ -18,6 +18,7 @@ await seed(runtime);
 // is stopped in the same phase, and only then is anything waited for.
 const { component: http } = startHttp(runtime);
 const scheduled = startScheduledWork(runtime);
-const components: Component[] = scheduled ? [http, scheduled] : [http];
+const observability = startObservability(runtime);
+const components: Component[] = [http, ...(scheduled ? [scheduled] : []), ...(observability ? [observability] : [])];
 const shutdown = registerShutdown(new GracefulShutdown({ graceMs: configuration.shutdownGraceMs }), components, runtime);
 shutdown.listen();

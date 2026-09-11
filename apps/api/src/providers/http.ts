@@ -25,6 +25,14 @@ export interface ProviderHttpOptions {
   backoffMs?: number;
   /** Upper bound on one backoff wait, so a long retry chain cannot outlive the ingestion window. */
   maxBackoffMs?: number;
+  /**
+   * The ceiling on one call in total, across every attempt and every wait between them.
+   *
+   * Bounding each attempt does not bound their sum: four attempts at fifteen seconds, plus backoff,
+   * is well over a minute on a client whose stated timeout is fifteen seconds. The budgets that fill
+   * this in live in `config/upstream.ts`, alongside the Sleeper client's, so the two agree.
+   */
+  maxElapsedMs?: number;
 }
 
 /**
@@ -47,7 +55,7 @@ export class ProviderHttpClient {
     options: ProviderHttpOptions = {},
     private readonly sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)),
   ) {
-    this.options = { timeoutMs: options.timeoutMs ?? 15_000, maxRetries: options.maxRetries ?? 3, backoffMs: options.backoffMs ?? 500, maxBackoffMs: options.maxBackoffMs ?? 20_000 };
+    this.options = { timeoutMs: options.timeoutMs ?? 15_000, maxRetries: options.maxRetries ?? 3, backoffMs: options.backoffMs ?? 500, maxBackoffMs: options.maxBackoffMs ?? 20_000, maxElapsedMs: options.maxElapsedMs ?? 90_000 };
   }
 
   /**
@@ -75,10 +83,12 @@ export class ProviderHttpClient {
   }
 
   private async request<T>(url: string, read: (response: Response) => Promise<T>, headers: Record<string, string> = {}, signal?: AbortSignal): Promise<T> {
+    const startedAt = Date.now();
     for (let attempt = 0; ; attempt += 1) {
       let wait: number | null = null;
       try {
-        const timeout = AbortSignal.timeout(this.options.timeoutMs);
+        // Whatever is left of the whole-call budget, so no chain of attempts can outlive it.
+        const timeout = AbortSignal.timeout(Math.max(1, Math.min(this.options.timeoutMs, this.options.maxElapsedMs - (Date.now() - startedAt))));
         const response = await this.fetcher(url, { headers: { Accept: 'application/json', ...headers }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
         if (!response.ok) {
           const category: FetchErrorCategory = response.status === 429 ? 'rate_limit'
@@ -97,7 +107,11 @@ export class ProviderHttpClient {
         if (signal?.aborted || !normalized.retryable || attempt >= this.options.maxRetries) throw normalized;
         const backoff = Math.min(this.options.backoffMs * 2 ** attempt, this.options.maxBackoffMs);
         // Full jitter: several ingestion jobs retrying a recovering source must not resynchronize onto it.
-        await this.sleep(wait ?? Math.random() * backoff);
+        const delay = wait ?? Math.random() * backoff;
+        // Sleeping past the deadline only to start an attempt that is aborted on arrival spends the
+        // rest of the ingestion window learning nothing.
+        if (Date.now() - startedAt + delay >= this.options.maxElapsedMs) throw normalized;
+        await this.sleep(delay);
       }
     }
   }

@@ -1,5 +1,6 @@
 import type { ProjectionIngestionService } from './ingest.js';
 import type { IngestionReport } from './service-level.js';
+import { logger } from '../log.js';
 
 /**
  * When ingestion runs.
@@ -98,7 +99,7 @@ export interface ScheduleOptions {
   clearTimer?: (timer: unknown) => void;
 }
 
-const defaultLogger = { info: (fields: Record<string, unknown>, message: string) => console.info(message, fields), error: (fields: Record<string, unknown>, message: string) => console.error(message, fields) };
+const defaultLogger = { info: (fields: Record<string, unknown>, message: string) => logger.info({ component: 'projection-feed', ...fields }, message), error: (fields: Record<string, unknown>, message: string) => logger.error({ component: 'projection-feed', ...fields }, message) };
 
 /**
  * Drives the ingestion service on the schedule.

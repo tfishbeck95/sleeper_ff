@@ -96,8 +96,21 @@ naming here:
 - **`WEB_ORIGIN`** is the exact origin, https outside local development, and may be a comma-separated
   pair during a cutover. A path is refused: the browser never sends one, so `https://host/app` would
   silently grant the whole host.
-- **`TRUST_PROXY`** is the number of proxies in front of the API. Too low and every client shares one
-  rate-limit bucket; too high and a client can spoof its own address by sending the header itself.
+- **`TRUST_PROXY`** says what sits in front of the API, and production will not guess. Both ways of
+  getting it wrong are silent: too low and every client shares one rate-limit bucket, so the first
+  person to exhaust it locks out everybody else; too high and Express reads a value the *client* put
+  in `X-Forwarded-For`, so a caller picks their own address, a fresh one per request, and the limits
+  stop existing. `TRUST_PROXY=true` is that second case unconditionally — it believes the whole
+  chain — and is **refused in production**. The topology above is one hop that rewrites the client
+  address, which is why [`deploy/compose.yaml`](../deploy/compose.yaml) sets `TRUST_PROXY: "1"`. An
+  API exposed directly is a legitimate deployment and sets `TRUST_PROXY=false`; what production
+  refuses is leaving it unset, because an unset value and a correct one look identical until load.
+- **`UPSTREAM_*`** are the timeout and retry budgets, defined once in
+  `apps/api/src/config/upstream.ts` and applied to both upstream clients. Each is a *whole* budget —
+  one attempt's timeout, the attempt count, the backoff ceiling, and the total across all of them —
+  because bounding each attempt does not bound their sum. Startup refuses a total shorter than one
+  attempt, and warns when the interactive total outlives `SHUTDOWN_GRACE_SECONDS`, which would mean
+  a drain cutting a request short rather than finishing it.
 
 ## Building and running the whole stack locally
 
@@ -118,6 +131,93 @@ rehearsing are the ones a single all-in-one process hides.
 > single-instance profile: one combined process on the JSON adapter with a persistent volume. Name the
 > service, or the PostgreSQL-backed ones start alongside it and take the same port. See
 > [storage](storage.md).
+
+## What the API asserts on every response
+
+Applied before routing, so they are on the responses no route handler produces either — the 404 from
+the router, the 415 from the body guard, the 429 from a limiter, the 500 from a defect. A header set
+inside a route is a header missing from every path that never reaches one.
+
+| Header | Value | Why |
+| --- | --- | --- |
+| `Content-Security-Policy` | `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; sandbox` | A JSON API looks like it has no browser surface until something makes a browser parse a response as a document — on this origin, holding the session cookie. The policy and the sandbox make that document inert. |
+| `X-Content-Type-Options` | `nosniff` | Stops the guess that turns a JSON body into `text/html` in the first place. |
+| `X-Frame-Options` | `DENY` | `frame-ancestors` for browsers that only know the older header. |
+| `Referrer-Policy` | `no-referrer` | A URL here can carry a league id; nothing downstream needs it. |
+| `Cross-Origin-Resource-Policy` | `same-site` | A response must not become a subresource of another site's page. `same-site`, not `same-origin`, because the dashboard is legitimately a sibling origin. |
+| `Cross-Origin-Opener-Policy`, `Origin-Agent-Cluster`, `X-Permitted-Cross-Domain-Policies`, `Permissions-Policy` | isolating defaults | Permissions this origin has never asked for are the easiest ones to keep. |
+| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` | Production only. Asserting it from a development server on plain http teaches the browser to refuse the development server. |
+| `X-Request-Id` | the request's id | Echoed on every response and repeated in the body of every failure, so a bug report can name the exact request and an operator can find its line in the log. |
+
+**CORS** is an exact-match list with no permissive fallback: no wildcard, no reflection of the
+request's own origin, and no development default in production — an unconfigured production
+deployment does not start, and the application cannot be *constructed* with an empty origin list
+either. Preflights allow only the methods and headers this API serves, so a request it does not
+serve fails at the preflight rather than at the router.
+
+**Cache-control** defaults to `private, no-store` with `Vary: Origin, Cookie`. Almost everything here
+is one account's view of one league, and the only thing distinguishing two accounts' requests for
+`/api/dashboard/1234` is a cookie. Two deliberate relaxations: `private, no-cache, must-revalidate`
+on the player directory and league detail, which are large, slow-changing and revalidate against an
+ETag; and `public` on the sample league, which is generated fiction with no account in it and is
+refused outright in production.
+
+**Request bodies** are parsed per route at that route's own size, not globally at the largest one —
+2kb for a login, 4kb for an account link — with a 16kb ceiling and a content-type check applied
+before any of them. A route that takes no body never reads one.
+
+**Failures are classified by what the caller can do about them.** A 4xx says what to fix, in a string
+this repository wrote, never echoing the value that was rejected. A 5xx says nothing but its class
+and the request id; the message, the stack and the failing path stay in the log. An upstream's 4xx is
+not the caller's 4xx: Sleeper answering 400 or 403 means *we* built a bad request, which is a 502.
+The exceptions are its 404, which genuinely means the league or user the caller named does not exist,
+and its 429, which is a 503 with `Retry-After` because the caller is not over any budget of theirs.
+
+**The probes are three different questions.** `/health/live` asks whether the process can answer at
+all; it consults nothing and stays 200 while draining, because a liveness probe that fails during a
+graceful shutdown is an orchestrator killing the shutdown it asked for, and one that fails on a
+database blip turns one outage into a fleet-wide restart loop. `/health/ready` asks whether to send
+this instance traffic; that is where storage and draining belong. `/health` is kept as readiness, so
+an existing load balancer configuration does not move. Both are public and say one word plus which
+check failed — never the version, the adapter, the worker's identity, an upstream's name or any
+path. The internal picture lives behind authentication at `GET /api/ops/status` and on `/metrics`;
+see the [runbook](runbook.md).
+
+**Logs are one JSON object per line, redacted on the way out.** Four classes of value never reach one,
+and each of them gets there by accident rather than on purpose: session ids and CSRF tokens (and
+their digests, which authenticate just as well), the forecast subscription key, absolute filesystem
+paths — `ENOENT ... open '/var/lib/huddle/store.json'` is the deployment's layout, published — and
+personal settings, where an account appears as a stable digest rather than as a login. `LOG_LEVEL`
+sets the floor; `silent` turns a process's own logging off.
+
+## Metrics, probes and alerts
+
+`METRICS_PORT` binds a second listener serving `/metrics`, `/health/live` and `/health/ready`. It is
+off unless a port is named, and it is **not** the application port on purpose: a scrape describes the
+deployment — route names, traffic volumes, error rates, how many leagues are connected — which is not
+a credential and is also not something to hand to whoever asks. Put it on an internal network or a
+sidecar rather than behind a token that ends up in a scrape configuration in a repository somewhere.
+
+| Published | Why it is worth having |
+| --- | --- |
+| Requests, latency and status by **route pattern** | The label is `/api/dashboard/:leagueId`, never the path. Cardinality is fixed by the route table rather than by how many leagues exist. |
+| Authentication failures by reason, rate-limit events by budget and dimension | `reuse_detected` rising means a session is being replayed; an `address` scope exhausting is a flood and a `session` scope is one client in a loop. Those need different actions. |
+| Sleeper calls, retries, timeouts and failures by endpoint and category | Retries are counted rather than inferred: a call that succeeded on its third attempt is a success *and* two retries, and a graph that only sees the success cannot tell a healthy upstream from one failing two in three. |
+| Sync duration, last success, stale and failing leagues | Aggregates, not per-league series. No alert is improved by knowing which of four hundred leagues is oldest; the runbook says how to find it. |
+| Forecast age, source timestamp, player count, identity-match rate, coverage | The source timestamp is the only thing that catches a source which stopped publishing while still answering 200. |
+| Recommendation readiness and **why** advice was withheld | Refusing to rank is designed behaviour, so the reason is the only operational signal there is. |
+| Storage query latency and failures by operation; pool utilization | Timed at the repository seam, so the numbers exist for the JSON adapter today and for PostgreSQL the day it lands. The pool series are *absent* rather than zero when there is no pool. |
+| Worker sweep lag, queue depth, jobs in flight, lock contention | Lag is what separates "the worker is running" from "the worker is keeping up" — a worker stuck behind a slow upstream answers its probe perfectly. Sweep-lease contention means a second worker is running that `SYNC_WORKER_ENABLED=false` should have opted out. |
+
+**Alerting comes in two forms, and you want exactly one of them.** An installation with Prometheus
+should scrape `/metrics` and load [`deploy/alerts/huddle.rules.yml`](../deploy/alerts/huddle.rules.yml),
+which expresses the conditions with proper windows and `for` durations. An installation without one
+gets the built-in evaluator, which runs **on the worker** — the conditions are about the installation,
+and evaluating them once per API instance would mean one page per instance for one problem. Six
+conditions: stale scoring, stale projections, repeated sync failures, worker inactivity, an elevated
+5xx rate, and storage failures. Each carries the anchor of its own section in the
+[runbook](runbook.md), because an alert with no action is a notification and notifications train
+people to close alerts without reading them.
 
 ## The web build
 

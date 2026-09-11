@@ -42,6 +42,23 @@ docker compose --profile single up single   # or: one process, JSON adapter, one
 the CDN cache policy, the release order, the rollback, and the staging environment — separate database,
 separate credentials, separate league connections.
 
+## Operating it
+
+`/health/live` asks whether the process can answer; `/health/ready` asks whether to send it traffic.
+They are separate because a liveness probe that fails on a database blip turns one outage into a
+fleet-wide restart loop, and one that fails during a drain kills the shutdown it was asked to
+perform. Both are public and say one word. The internal picture — forecast freshness, the last
+successful league synchronization, whether anything is claiming the schedule, how Sleeper is
+behaving — is authenticated at `GET /api/ops/status`, and the numbers behind it are on `/metrics`,
+served on its own internal port rather than the application's.
+
+Six conditions raise an alert: stale scoring, stale projections, repeated sync failures, worker
+inactivity, an elevated 5xx rate, and storage failures. Each names the step that resolves it in
+[`docs/runbook.md`](docs/runbook.md), which is written for the person who has been paged and has not
+read it before. The failure worth knowing about in advance is the quiet one: every API instance keeps
+serving the last good snapshot perfectly while the worker that refreshes it is dead, so uptime is not
+evidence that anything is current.
+
 ## Storage
 
 Persistence sits behind repository interfaces, with two adapters: a JSON document for local

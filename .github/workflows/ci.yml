@@ -14,6 +14,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # A vulnerability is published on its own schedule, not on ours. A commit that was clean when it
+  # merged is not clean forever, and nothing re-checks a branch nobody is pushing to — so the scans
+  # below run weekly against `main` as well as on every change.
+  schedule:
+    - cron: '17 6 * * 1'
 
 # Read-only. No job needs to write to the repository, and the token cannot be misused for what it was
 # never granted.
@@ -133,6 +138,9 @@ jobs:
             | tar -xz -C /usr/local/bin gitleaks
           gitleaks version
 
+      # Findings established as not secrets are listed in `.gitleaksignore`, by a fingerprint that
+      # names the commit as well as the file — so an entry can never mask a real secret added to the
+      # same file later.
       - name: Scan the history
         run: gitleaks detect --source . --redact --verbose --exit-code 1
 
@@ -167,6 +175,39 @@ jobs:
       - name: Audit the development tree
         continue-on-error: true
         run: npm audit --audit-level=moderate
+
+      - name: Install trivy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Resolved from the current release rather than pinned to a version, and the asset picked by
+          # pattern rather than by name. A vulnerability scanner is the one dependency you want to be
+          # current — a pinned old one quietly stops seeing new advisories, which is the failure mode
+          # that matters here — and trivy has changed its release asset naming before, which is a
+          # build breaking on something that has nothing to do with the commit.
+          asset=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/aquasecurity/trivy/releases/latest \
+            | jq -r '.assets[].browser_download_url' \
+            | grep -Ei 'linux[-_](64bit|amd64|x86_64)\.tar\.gz$' | head -1)
+          if [ -z "$asset" ]; then echo 'no linux amd64 asset in the current trivy release'; exit 1; fi
+          echo "installing $asset"
+          curl -fsSL "$asset" | tar -xz -C /usr/local/bin trivy
+          trivy --version
+
+      # A second opinion on the same lockfile, from a different advisory database. `npm audit` reads
+      # the npm registry's; this reads the GitHub and OSV feeds. An advisory usually reaches one
+      # before the other, and the gap between them is measured in days.
+      #
+      # `--ignore-unfixed` is deliberate: an advisory with no fixed version is a thing to track, not
+      # a thing a pull request can act on, and a build that cannot be made green stops being read.
+      - name: Scan the dependency tree
+        run: |
+          trivy filesystem . \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            --timeout 10m
 
   # --- Images -------------------------------------------------------------------------------------
   images:
@@ -224,6 +265,17 @@ jobs:
           docker run --rm --entrypoint sh huddle-api:ci -c '! find /app/apps/api/dist /app/packages -name "*.ts" ! -name "*.d.ts" | grep .'
           test "$(docker run --rm --entrypoint id huddle-api:ci -u)" != "0"
 
+      # Asserted rather than assumed, for every image that has a user to get wrong. The web image
+      # steps up to root to patch its packages and back down again; this is what catches it if the
+      # step back down ever stops working.
+      - name: Every image runs as an unprivileged user
+        run: |
+          for image in huddle-api:ci huddle-web:ci huddle-migrate:ci; do
+            uid=$(docker run --rm --entrypoint id "$image" -u)
+            echo "$image runs as uid $uid"
+            test "$uid" != "0"
+          done
+
       # The refusals are the product: an image that starts without a named storage adapter, or with a
       # plain-http origin in production, is an image that would have started wrong in production.
       - name: The image refuses an incomplete configuration
@@ -241,3 +293,51 @@ jobs:
           cp .env.staging.example .env.staging
           sed -i 's/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=ci/; s|^APP_LOGIN_PASSWORD_HASH=$|APP_LOGIN_PASSWORD_HASH=scrypt:ab12:cd34|' .env.staging
           docker compose --env-file .env.staging -f compose.yaml -f compose.staging.yaml config --quiet
+
+      - name: Install trivy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Resolved from the current release rather than pinned to a version, and the asset picked by
+          # pattern rather than by name. A vulnerability scanner is the one dependency you want to be
+          # current — a pinned old one quietly stops seeing new advisories, which is the failure mode
+          # that matters here — and trivy has changed its release asset naming before, which is a
+          # build breaking on something that has nothing to do with the commit.
+          asset=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/aquasecurity/trivy/releases/latest \
+            | jq -r '.assets[].browser_download_url' \
+            | grep -Ei 'linux[-_](64bit|amd64|x86_64)\.tar\.gz$' | head -1)
+          if [ -z "$asset" ]; then echo 'no linux amd64 asset in the current trivy release'; exit 1; fi
+          echo "installing $asset"
+          curl -fsSL "$asset" | tar -xz -C /usr/local/bin trivy
+          trivy --version
+
+      # The images, not the lockfile. Most of what is in one of these came from a base image — the
+      # Alpine and nginx layers, their OpenSSL, their libc — and none of it appears in any manifest
+      # this repository has. It is also the part that goes stale fastest: a base image published two
+      # months ago is two months of advisories behind.
+      #
+      # Blocking on `main` and on the weekly run; reporting on a pull request. The line is what a
+      # change can act on: a lockfile advisory is fixed by the diff that introduces it, so the
+      # dependency scan above blocks everywhere. A base-image advisory is not — it appears the day
+      # Alpine publishes a fix and disappears the day upstream rebuilds, and no author can do
+      # anything about it from inside their pull request. Blocking there turns every unrelated
+      # change red for days at a time, which is how a scanner stops being read at all. So it is not
+      # silent and it is not a wall: the finding is printed on every run, the images are patched at
+      # build time by the `apk upgrade` in each Dockerfile, and the scheduled run is where somebody
+      # has to actually deal with what is left.
+      - name: Images carry no known high or critical vulnerability
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        run: |
+          fail=0
+          for image in huddle-api:ci huddle-migrate:ci huddle-web:ci; do
+            echo "::group::$image"
+            trivy image "$image" \
+              --scanners vuln \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              --timeout 10m || fail=1
+            echo "::endgroup::"
+          done
+          exit $fail

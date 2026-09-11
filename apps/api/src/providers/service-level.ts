@@ -2,6 +2,8 @@ import type { CoverageReport } from './coverage.js';
 import type { DerivationNote } from './derivation.js';
 import type { IdentityResolution } from './identity.js';
 import type { FeedProvenance, UnresolvedIdentity } from './provider.js';
+import { logger } from '../log.js';
+import { forecastBreaches, forecastIngestions } from '../observability/instruments.js';
 
 /**
  * What one ingestion did, and whether it was good enough to rely on.
@@ -152,7 +154,7 @@ export interface Alerter { alert(event: AlertEvent): Promise<void> | void }
 
 /** The default: structured to stderr, where a container's log pipeline already collects it. */
 export class ConsoleAlerter implements Alerter {
-  constructor(private readonly log: (fields: Record<string, unknown>, message: string) => void = (fields, message) => console.error(message, fields)) {}
+  constructor(private readonly log: (fields: Record<string, unknown>, message: string) => void = (fields, message) => logger.error({ component: 'projection-feed', ...fields }, message)) {}
   alert(event: AlertEvent) {
     this.log({
       season: event.season, week: event.week, status: event.status, severity: event.severity,
@@ -184,12 +186,27 @@ export class WebhookAlerter implements Alerter {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
-      console.error('[projection-feed] alert delivery failed', { message: error instanceof Error ? error.message : String(error) });
+      logger.error({ component: 'projection-feed', error }, 'alert delivery failed');
     }
   }
 }
 
 /** Fans out to several destinations; one failing destination never suppresses the others. */
+/**
+ * Records what an ingestion run produced, alongside whatever alerting it triggers.
+ *
+ * Counted at the point the run is judged rather than at the point it is delivered, so a webhook that
+ * is unreachable costs an alert and never a metric.
+ */
+export class MeteredAlerter implements Alerter {
+  constructor(private readonly inner: Alerter) {}
+  async alert(event: AlertEvent) {
+    forecastIngestions.inc({ status: event.status });
+    for (const breach of event.breaches) forecastBreaches.inc({ kind: breach.kind, severity: breach.severity });
+    await this.inner.alert(event);
+  }
+}
+
 export class CompositeAlerter implements Alerter {
   constructor(private readonly alerters: Alerter[]) {}
   async alert(event: AlertEvent) { await Promise.allSettled(this.alerters.map(async alerter => alerter.alert(event))); }

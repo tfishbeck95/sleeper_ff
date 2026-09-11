@@ -48,6 +48,18 @@ LABEL org.opencontainers.image.title="Huddle web" \
 # Substituted into the template at container start by the base image's entrypoint, so one image can be
 # pointed at the API origin its `connect-src` has to allow. It is a policy value, not a secret.
 ENV API_ORIGIN="'self'"
+
+# The base image's own packages, brought up to date, for the same reason the API image does it: a
+# tagged image carries whatever Alpine packages upstream last built with, and between a security
+# release and the next rebuild those have published fixes the image does not have yet.
+#
+# This base image runs unprivileged, so the upgrade has to step up to root and back down. The step
+# back down is asserted in CI — `id -u` on the built image — because getting it wrong here would ship
+# a root nginx, and that is a mistake that should fail a build rather than wait to be noticed.
+USER root
+RUN apk --no-cache upgrade
+USER nginx
+
 COPY deploy/web/default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 

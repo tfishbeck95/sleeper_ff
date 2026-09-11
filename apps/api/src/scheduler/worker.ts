@@ -10,6 +10,8 @@ export type LeagueSyncWorkerRepository = LeagueConnectionRepository & LeagueRepo
 import type { SyncResult } from '../sync.js';
 import { StoreSyncLock, type LeaseHandle, type SyncLock } from './lock.js';
 import { leagueIsHistorical, resolveSyncTarget } from './week.js';
+import { logger } from '../log.js';
+import { lockContention, workerHeartbeatAt, workerInFlight, workerLag, workerQueueDepth } from '../observability/instruments.js';
 
 /**
  * The background league synchronization worker.
@@ -90,7 +92,7 @@ export const SWEEP_LEASE_KEY = 'league-sync:sweep';
 export const leagueLeaseKey = (leagueId: string) => `league-sync:league:${leagueId}`;
 
 interface PendingJob extends SyncJob { done: Promise<JobResult>; settle: (result: JobResult) => void; }
-const defaultLogger: WorkerLogger = { info: (fields, message) => console.info(message, fields), error: (fields, message) => console.error(message, fields) };
+const defaultLogger: WorkerLogger = { info: (fields, message) => logger.info({ component: 'league-sync', ...fields }, message), error: (fields, message) => logger.error({ component: 'league-sync', ...fields }, message) };
 const wait = (ms: number) => new Promise<void>(resolve => { const timer = setTimeout(resolve, ms); timer.unref?.(); });
 
 export class LeagueSyncWorker {
@@ -103,6 +105,8 @@ export class LeagueSyncWorker {
   private sweeping: Promise<SweepReport> | null = null;
   private sweepLease: LeaseHandle | null = null;
   private timer: unknown = null;
+  /** When the next scheduled sweep was due, for measuring how late it actually started. */
+  private dueAt: number | null = null;
   private stopped = true;
   private readonly options: Required<Omit<LeagueSyncWorkerOptions, 'setTimer' | 'clearTimer' | 'lock'>> & Pick<LeagueSyncWorkerOptions, 'setTimer' | 'clearTimer'>;
   private readonly lock: SyncLock;
@@ -221,11 +225,20 @@ export class LeagueSyncWorker {
     const report: SweepReport = { at, reason, considered: 0, queued: [], skipped: [], archived: [], pruned: [], results: [], ranSweep: false };
     const lease = await this.lock.acquire(SWEEP_LEASE_KEY, this.options.leaseTtlMs);
     if (!lease) {
+      // Not contention in the usual sense: one worker is meant to own the schedule, so a steady rate
+      // here is a second worker that `SYNC_WORKER_ENABLED=false` was supposed to have opted out.
+      lockContention.inc({ lease: 'sweep' });
       this.options.logger.info({ reason, owner: this.lock.owner }, '[league-sync] another worker holds the sweep lease');
       return report;
     }
     this.sweepLease = lease;
     report.ranSweep = true;
+    // The lease is the heartbeat: it is renewed while the sweep works, and an expired one is a worker
+    // that stopped without releasing it.
+    workerHeartbeatAt.set({}, Date.parse(at) / 1000);
+    // How late this sweep is against its own schedule. A worker that answers its probe while stuck
+    // behind a slow upstream is running and not keeping up, and only this number separates the two.
+    if (this.dueAt !== null) workerLag.observe({}, Math.max(0, (this.options.now().getTime() - this.dueAt) / 1000));
     try {
       await this.store.reconcileLeagueConnections(at, this.options.demoLeagueIds);
       const retention = await this.applyRetention();
@@ -300,7 +313,14 @@ export class LeagueSyncWorker {
    * fixed pool started at the first of them would have exited before the rest arrived — leaving the
    * concurrency limit intact but the concurrency itself at one.
    */
+  /** Republished wherever the queue moves, so a scrape sees depth rather than a sampled guess. */
+  private publishQueueDepth(): void {
+    workerQueueDepth.set({}, this.queue.length);
+    workerInFlight.set({}, this.inFlight.size);
+  }
+
   private pump(): void {
+    this.publishQueueDepth();
     while (this.workers.size < this.options.concurrency && this.queue.length > 0) {
       const worker = this.workerLoop();
       this.workers.add(worker);
@@ -312,11 +332,13 @@ export class LeagueSyncWorker {
     for (;;) {
       const job = this.queue.shift();
       if (!job) return;
+      this.publishQueueDepth();
       const result = await this.runJob(job);
       // Cleared before the waiters are resolved, so a caller that enqueues again the moment its own
       // refresh finishes gets a new job rather than joining one that is already over.
       this.pending.delete(job.leagueId);
       job.settle(result);
+      this.publishQueueDepth();
       for (const collector of this.collectors) collector.push(result);
       // A sweep can outlive one lease TTL when it has many leagues to work through.
       await this.sweepLease?.renew();
@@ -339,6 +361,7 @@ export class LeagueSyncWorker {
   private async attempt(job: SyncJob): Promise<JobResult> {
     const lease = await this.lock.acquire(leagueLeaseKey(job.leagueId), this.options.leaseTtlMs);
     if (!lease) {
+      lockContention.inc({ lease: 'league' });
       this.options.logger.info({ leagueId: job.leagueId }, '[league-sync] league is being synchronized by another worker');
       return { leagueId: job.leagueId, status: 'skipped', reason: 'lease-held', durationMs: 0 };
     }
@@ -391,6 +414,9 @@ export class LeagueSyncWorker {
   private schedule(): void {
     if (this.stopped) return;
     const delay = this.options.sweepIntervalMs + this.randomJitter();
+    // Recorded when the next sweep is *due*, so the lag it reports is measured against the schedule
+    // rather than against when the timer happened to fire.
+    this.dueAt = this.options.now().getTime() + delay;
     const timer = (this.options.setTimer ?? setTimeout)(() => { void this.sweep('schedule').catch(error => this.options.logger.error({ message: String(error) }, '[league-sync] sweep failed')).finally(() => this.schedule()); }, delay);
     timer.unref?.();
     this.timer = timer;
