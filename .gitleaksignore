@@ -1,0 +1,15 @@
+# Findings that have been checked and are not secrets.
+#
+# Each line is a gitleaks fingerprint: commit, file, rule, line. That shape is what makes an entry
+# here safe — it allowlists one finding in one commit, so it can never mask a real secret added to
+# the same file later, and it expires naturally the moment the history it names is rewritten.
+#
+# Nothing is added here without being verified first. A finding that is a real secret is rotated and
+# the history is rewritten; an entry below means somebody read it and established it was neither.
+
+# A fixture in the log-redaction test: an invented string with the shape of a provider key, present
+# so the test can prove the redactor removes one. It authenticates nothing and never did, so there is
+# nothing to rotate. The literal was replaced with an inert placeholder in the following commit, but
+# the scan reads history — correctly, since a secret is compromised from the commit that introduced
+# it — so removing it from the tip does not and should not clear the finding.
+0e62ff88c1b2527790f11e242119d58d13119d30:apps/api/src/log.test.ts:generic-api-key:30

@@ -138,6 +138,9 @@ jobs:
             | tar -xz -C /usr/local/bin gitleaks
           gitleaks version
 
+      # Findings established as not secrets are listed in `.gitleaksignore`, by a fingerprint that
+      # names the commit as well as the file — so an entry can never mask a real secret added to the
+      # same file later.
       - name: Scan the history
         run: gitleaks detect --source . --redact --verbose --exit-code 1
 
