@@ -1,0 +1,8 @@
+{
+  "//": "The bundle build, which runs inside deploy/web.Dockerfile. That image copies apps/web and the workspace packages and deliberately not apps/api — the dashboard bundle does not contain the API — so the dashboard's tests, which import the engines from apps/api/src to assert the UI renders their real output, cannot be type checked there. They are still type checked by `npm run typecheck`, which runs in a checkout where apps/api exists; what is excluded here is only what the image cannot see, and only for the build that produces the bundle.",
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
+  ]
+}
