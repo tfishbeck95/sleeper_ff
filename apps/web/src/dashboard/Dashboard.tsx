@@ -30,7 +30,7 @@ export function Dashboard({ connection, onConnect, onDemo, onSignOut }: { connec
   const [week, setWeek] = useState(connection?.leagues[0]?.league.settings.leg || 1);
   const [reload, setReload] = useState(0);
   const demoData = useMemo(createDemo, []);
-  const [bounds, setBounds] = useState({ maxValueGap: '.25', maxRisk: '.65' });
+  const [bounds, setBounds] = useState({ maxValueGap: '0.25', maxRisk: '0.65' });
   const key = `${connection?.user.user_id ?? 'demo'}:${leagueId}:${week}:${bounds.maxValueGap}:${bounds.maxRisk}`;
   const [result, setResult] = useState<{ key: string; data: DashboardData; command: CommandCenterResponse } | null>(null);
   const [requestState, setRequestState] = useState<{ key: string; busy: boolean; error: string }>({ key, busy: Boolean(connection), error: '' });

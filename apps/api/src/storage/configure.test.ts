@@ -47,15 +47,13 @@ test('an instance told another owns the schedule is treated as one of several', 
   assert.throws(() => instanceMode(env({ APP_INSTANCE_MODE: 'cluster' })), /must be 'single' or 'multi'/);
 });
 
-test('PostgreSQL requires a connection string, and is refused until an adapter exists', () => {
+test('PostgreSQL requires a connection string and selects the transactional adapter', async () => {
   assert.throws(() => storageConfiguration(env({ ...PRODUCTION, STORAGE_ADAPTER: 'postgres' })), /requires DATABASE_URL/);
   const configuration = storageConfiguration(env({ ...PRODUCTION, STORAGE_ADAPTER: 'postgres', DATABASE_URL: 'postgres://huddle:secret@db:5432/huddle' }));
   assert.equal(configuration.adapter, 'postgres');
-  assert.throws(
-    () => createRepository(env({ ...PRODUCTION, STORAGE_ADAPTER: 'postgres', DATABASE_URL: 'postgres://huddle:secret@db:5432/huddle' })),
-    /no PostgreSQL adapter is implemented yet[\s\S]*apps\/api\/migrations/,
-    'refused at startup, naming the schema and the contract, rather than failing on the first query',
-  );
+  const { repository } = createRepository(env({ ...PRODUCTION, STORAGE_ADAPTER: 'postgres', DATABASE_URL: 'postgres://huddle:secret@db:5432/huddle' }));
+  assert.equal(repository.adapter, 'postgres');
+  await repository.close?.();
   // A connection string carries a password, so what gets logged is the database, not the URL.
   assert.equal(describeStorage(configuration), 'postgres adapter, single-instance, huddle');
 });

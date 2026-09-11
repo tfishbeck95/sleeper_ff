@@ -120,3 +120,11 @@ Forecasts can be maintained by hand in a JSON file, or ingested automatically fr
 The Trades section evaluates every roster and proposes offers only when both managers gain value addressing a need and retain legal lineups within configurable fairness and risk bounds. Redraft and dynasty have separate valuation, with dynasty age, career horizons, rookie capital and contender/rebuilder strategy. Review both teams’ values and lineups, risks and cheaper alternatives, then edit and copy a message. No offers or messages are sent. Live analysis uses the same forecast source with additional dynasty fields; see [trade engine and configuration](docs/trades.md).
 
 See [Owner command center](docs/command-center.md) for the aggregated dashboard API, shared snapshot provenance, and section readiness states.
+
+## Full-stack tests and staging smoke
+
+Run `npm ci`, `npx playwright install chromium`, and `npm run test:e2e` with Docker running.
+The suite builds and launches the HTTPS web app, API and worker against isolated PostgreSQL databases,
+replays sanitized Sleeper contracts, and tests migration from schema 0009. See [testing](docs/testing.md)
+for all scenarios, Podman/existing database options, artifacts, and the staging secrets needed by the
+automatic post-deployment smoke workflow.

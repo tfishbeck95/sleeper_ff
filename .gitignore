@@ -12,3 +12,5 @@ data/*.json
 # TypeScript's incremental build cache. A build artifact, and a stale one committed is how a build
 # behaves differently in CI than it does in a checkout.
 *.tsbuildinfo
+playwright-report/
+test-results/

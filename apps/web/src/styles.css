@@ -118,7 +118,7 @@ select { color: #2d4435; border: 1px solid #dce4de; background: white; border-ra
 .decision-layout, .market-layout { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(320px, 1fr); gap: 24px; margin-bottom: 32px; align-items: start; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .section-title { display: flex; align-items: center; gap: 8px; }
-.section-number { color: #7c907c; font-size: 12px; font-weight: 600; }
+.section-number { color: #52644c; font-size: 12px; font-weight: 600; }
 .section-heading h2 { font: 700 18px/1.4 Manrope, sans-serif; letter-spacing: -.45px; margin: 0; }
 .section-heading p { font-size: 13px; line-height: 1.5; margin: 5px 0 0; color: var(--muted); }
 .start-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
@@ -226,7 +226,7 @@ td small { display: block; font-size: 12px; margin-top: 5px; line-height: 1.4; c
 .surface-heading { display: flex; align-items: center; justify-content: space-between; padding: 18px 17px; gap: 8px; }
 .surface-heading h3 { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; margin: 0; }
 .surface-heading h3>svg { color: #718861; }
-.surface-heading>span { color: #768672; font-size: 12px; }
+.surface-heading>span { color: #52644c; font-size: 12px; }
 .standings-table { min-width: 355px; }
 .standings-table th:first-child, .standings-table td:first-child { padding-left: 17px; }
 .standings-table td { font-size: 12px; padding-top: 15px; padding-bottom: 15px; }
@@ -248,16 +248,16 @@ td small { display: block; font-size: 12px; margin-top: 5px; line-height: 1.4; c
 .activity-list p { margin: 3px 0 5px; font-size: 12px; color: #6d7b68; line-height: 1.6; overflow-wrap: anywhere; }
 .activity-list time { color: #7c8877; font-size: 12px; }
 .playoff-card { background: #edf3e4; border: 1px solid #dce7ce; border-radius: 9px; padding: 19px 18px 0; }
-.playoff-card .eyebrow { font-size: 12px; color: #647e4e; letter-spacing: 1px; }
+.playoff-card .eyebrow { font-size: 12px; color: #52644c; letter-spacing: 1px; }
 .playoff-card h3 { font: 700 17px Manrope, sans-serif; margin: 12px 0 13px; }
 .playoff-number { font: 800 43px/1 Manrope, sans-serif; letter-spacing: -2px; color: #3e5b30; }
 .playoff-number>span { font-size: 26px; }
-.playoff-number small { display: block; font: 400 12px 'DM Sans', sans-serif; color: #718066; letter-spacing: 0; margin: 8px 0 0; }
-.playoff-card>p { color: #67765b; font-size: 13px; line-height: 1.7; margin: 15px 0; }
-.playoff-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 9px; padding: 13px 0; font-size: 12px; color: #62754f; border-top: 1px solid #d8e3cd; }
+.playoff-number small { display: block; font: 400 12px 'DM Sans', sans-serif; color: #52644c; letter-spacing: 0; margin: 8px 0 0; }
+.playoff-card>p { color: #52644c; font-size: 13px; line-height: 1.7; margin: 15px 0; }
+.playoff-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 9px; padding: 13px 0; font-size: 12px; color: #52644c; border-top: 1px solid #d8e3cd; }
 .text-link { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; font-size: 13px; color: #536f46; }
 .text-link:hover { text-decoration: underline; }
-.dashboard-footer { border-top: 1px solid var(--line); margin-top: 32px; padding: 21px 0; display: flex; align-items: center; justify-content: space-between; gap: 15px; color: #72806c; }
+.dashboard-footer { border-top: 1px solid var(--line); margin-top: 32px; padding: 21px 0; display: flex; align-items: center; justify-content: space-between; gap: 15px; color: #52644c; }
 .footer-brand { font: 800 20px Manrope, sans-serif; letter-spacing: -1px; color: #5d7552; }
 .dashboard-footer p { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 0; }
 .dashboard-footer>span:last-child { font-size: 12px; }
@@ -499,7 +499,7 @@ td small { display: block; font-size: 12px; margin-top: 5px; line-height: 1.4; c
 .waiver-planner-heading, .waiver-pair-top, .waiver-plan-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .waiver-planner-heading { justify-content: space-between; }
 .waiver-planner-heading > span { display: flex; align-items: center; gap: 8px; font-weight: 650; }
-.waiver-source, .waiver-plan-note, .waiver-drop-reason, .waiver-manual-note { color: #68738a; font-size: 12px; line-height: 1.65; }
+.waiver-source, .waiver-plan-note, .waiver-drop-reason, .waiver-manual-note { color: #566278; font-size: 12px; line-height: 1.65; }
 .waiver-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 18px 0 12px; }
 .waiver-filters label { display: grid; gap: 6px; color: #43506a; font-size: 11px; font-weight: 650; }
 .waiver-filters select { width: 100%; min-width: 0; border: 1px solid #dce2ed; border-radius: 7px; background: #fff; padding: 9px; color: #29334b; font: inherit; font-size: 12px; }
@@ -517,32 +517,32 @@ td small { display: block; font-size: 12px; margin-top: 5px; line-height: 1.4; c
 .waiver-include { display: flex; align-items: center; gap: 5px; margin-left: auto; cursor: pointer; }
 .waiver-include input { accent-color: #5263de; width: 16px; height: 16px; }
 .waiver-pair h3 { margin: 15px 0 6px; font-size: 16px; line-height: 1.5; }
-.waiver-pair h3 small { color: #758097; font-size: 10px; font-weight: 500; white-space: nowrap; }
+.waiver-pair h3 small { color: #566278; font-size: 10px; font-weight: 500; white-space: nowrap; }
 .waiver-add-label { color: #127364; font-size: 10px; letter-spacing: .08em; }
 .waiver-drop { font-size: 12px; color: #59647b; margin: 4px 0; }
 .waiver-need { font-size: 11px; color: #59647b; line-height: 1.6; }
 .waiver-comparisons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; background: #f7f8fc; border-radius: 7px; }
-.waiver-comparisons dt { font-size: 10px; color: #68738a; line-height: 1.6; }
+.waiver-comparisons dt { font-size: 10px; color: #566278; line-height: 1.6; }
 .waiver-comparisons dd { margin: 5px 0 0; color: #3042ac; font-size: 15px; font-weight: 650; }
 .waiver-upcoming { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-.waiver-upcoming > span { flex: 1 1 90px; padding: 8px; border: 1px solid #e5e9f0; border-radius: 6px; font-size: 10px; color: #68738a; }
+.waiver-upcoming > span { flex: 1 1 90px; padding: 8px; border: 1px solid #e5e9f0; border-radius: 6px; font-size: 10px; color: #566278; }
 .waiver-upcoming strong { display: block; margin-top: 5px; color: #43506a; }
 .waiver-faab { border-left: 3px solid #7380e5; padding-left: 11px; margin: 16px 0; font-size: 13px; }
-.waiver-faab small { display: block; font-size: 10px; font-weight: 500; color: #68738a; margin-top: 4px; }
-.waiver-faab p { color: #68738a; font-size: 11px; line-height: 1.65; }
+.waiver-faab small { display: block; font-size: 10px; font-weight: 500; color: #566278; margin-top: 4px; }
+.waiver-faab p { color: #566278; font-size: 11px; line-height: 1.65; }
 .waiver-plan-actions { margin-top: 18px; }
 .waiver-plan-actions .primary-button { display: flex; align-items: center; gap: 7px; padding: 10px 14px; border: 0; border-radius: 7px; color: white; background: #5263d9; font: inherit; font-size: 12px; cursor: pointer; }
 .waiver-plan-actions .primary-button:disabled { opacity: .5; cursor: default; }
 .waiver-copy-status { font-size: 12px; color: #3042ac; }
 .waiver-plan-preview textarea { box-sizing: border-box; width: 100%; border: 1px solid #dce2ed; border-radius: 8px; padding: 12px; margin-top: 10px; resize: vertical; color: #35415a; background: #fafbfe; font: 12px/1.7 monospace; }
 .waiver-manual-note { border-top: 1px solid #e5e9f0; padding-top: 14px; }
-.waiver-empty { text-align: center; padding: 28px 12px; font-size: 13px; color: #68738a; line-height: 1.7; }
+.waiver-empty { text-align: center; padding: 28px 12px; font-size: 13px; color: #566278; line-height: 1.7; }
 @media (max-width: 600px) { .waiver-planner { padding: 14px; } .waiver-pair { padding: 12px; } .waiver-comparisons { grid-template-columns: 1fr; gap: 10px; } }
 /* Lineup analysis: league-scored points with the arithmetic that produced them, on demand. */
 .lineup-analysis { padding: 20px; min-width: 0; margin-top: 16px; font-size: 13px; line-height: 1.6; }
 .lineup-analysis summary { cursor: pointer; font-weight: 650; }
 .lineup-analysis ul { padding-left: 20px; }
-.lineup-source, .lineup-methodology { color: #68738a; font-size: 11px; line-height: 1.65; }
+.lineup-source, .lineup-methodology { color: #566278; font-size: 11px; line-height: 1.65; }
 .lineup-source code { font-size: 10px; word-break: break-all; }
 .lineup-methodology { border-top: 1px solid #e5e9f0; padding-top: 12px; margin-top: 16px; }
 .lineup-warnings, .lineup-rejections { font-size: 12px; color: #53617a; line-height: 1.65; }
@@ -551,21 +551,21 @@ td small { display: block; font-size: 12px; margin-top: 5px; line-height: 1.4; c
 .lineup-slots > li { display: grid; grid-template-columns: 48px 1fr auto; align-items: baseline; gap: 8px; padding: 10px 12px; border: 1px solid #e1e6ee; border-radius: 9px; }
 .lineup-slot-name { color: #354ed0; font-size: 10px; font-weight: 700; letter-spacing: .06em; }
 .lineup-slot-points { font-size: 15px; font-weight: 650; color: #29334b; }
-.lineup-slot-range { grid-column: 2 / -1; color: #68738a; font-size: 10px; }
+.lineup-slot-range { grid-column: 2 / -1; color: #566278; font-size: 10px; }
 .lineup-slots .scoring-breakdown { grid-column: 1 / -1; }
 .start-sit { border: 1px solid #e1e6ee; border-left: 3px solid #5263d9; border-radius: 9px; padding: 14px; }
 .start-sit h4 { margin: 6px 0; font-size: 15px; }
 .start-sit-slot { display: flex; align-items: center; gap: 6px; color: #596680; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
-.start-sit-cautions { color: #68738a; font-size: 11px; }
-.lineup-empty { text-align: center; padding: 22px 12px; color: #68738a; }
+.start-sit-cautions { color: #566278; font-size: 11px; }
+.lineup-empty { text-align: center; padding: 22px 12px; color: #566278; }
 .lineup-matchup-totals { display: flex; align-items: center; justify-content: center; gap: 18px; margin: 14px 0; }
 .lineup-matchup-totals strong { display: block; font-size: 26px; color: #29334b; }
-.lineup-matchup-totals span { color: #68738a; font-size: 11px; }
+.lineup-matchup-totals span { color: #566278; font-size: 11px; }
 .scoring-breakdown, .scoring-breakdown-empty { font-size: 11px; color: #53617a; line-height: 1.6; margin: 8px 0; }
 .scoring-breakdown table { width: 100%; border-collapse: collapse; margin: 8px 0; }
 .scoring-breakdown th, .scoring-breakdown td { padding: 4px 6px; text-align: right; border-bottom: 1px solid #eef1f6; font-weight: 500; }
 .scoring-breakdown th[scope="row"], .scoring-breakdown thead th:first-child { text-align: left; }
-.scoring-breakdown thead th { color: #68738a; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+.scoring-breakdown thead th { color: #566278; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
 @media (max-width: 600px) { .lineup-analysis { padding: 14px; } .lineup-slots > li { grid-template-columns: 44px 1fr auto; } }
 /* Receiving opportunity: context for a projection, never presented as extra value. */
 .opportunity-detail { margin: 8px 0; }
@@ -577,9 +577,9 @@ td small { display: block; font-size: 12px; margin-top: 5px; line-height: 1.4; c
 .opportunity-tag.floor-lift { color: #4a3b8c; background: #f0ecff; }
 .opportunity-breakdown { font-size: 11px; color: #53617a; line-height: 1.6; }
 .opportunity-breakdown dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; margin: 8px 0; }
-.opportunity-breakdown dt { color: #68738a; font-size: 10px; }
+.opportunity-breakdown dt { color: #566278; font-size: 10px; }
 .opportunity-breakdown dd { margin: 0; color: #29334b; font-weight: 650; }
-.opportunity-note { color: #68738a; font-style: italic; }
+.opportunity-note { color: #566278; font-style: italic; }
 @media (max-width: 600px) { .opportunity-breakdown dl { grid-template-columns: 1fr; } }
 /* Trade planning keeps both sides visible and supports narrow dashboard columns. */
 .trade-planner { padding: 22px; min-width: 0; font-size: 13px; line-height: 1.55; }

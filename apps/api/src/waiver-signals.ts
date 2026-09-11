@@ -214,7 +214,10 @@ export class FileWaiverSignalProvider implements WaiverSignalProvider {
   constructor(private readonly path = process.env.WAIVER_SIGNALS_PATH) {}
   async load(season: string, week: number) {
     if (!this.path) return null;
-    const parsed = validatedForecastSnapshot(JSON.parse(await readFile(this.path, 'utf8')));
+    let content: string;
+    try { content = await readFile(this.path, 'utf8'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+    const parsed = validatedForecastSnapshot(JSON.parse(content));
     return parsed.season === season && parsed.week === week ? parsed : null;
   }
 }

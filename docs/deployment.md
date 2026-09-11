@@ -124,13 +124,9 @@ That brings up PostgreSQL, applies the migrations to completion, and then starts
 and the dashboard — the deployment topology rather than an approximation of it, because the parts worth
 rehearsing are the ones a single all-in-one process hides.
 
-> **The API and worker refuse to start against PostgreSQL until the adapter exists.** The schema in
-> `apps/api/migrations` is real and the stack applies it, but `createRepository` has no PostgreSQL
-> implementation behind it yet and says so at startup rather than failing on the first query in front
-> of a user. Until it lands, `docker compose --profile single up single` runs the supported
-> single-instance profile: one combined process on the JSON adapter with a persistent volume. Name the
-> service, or the PostgreSQL-backed ones start alongside it and take the same port. See
-> [storage](storage.md).
+The PostgreSQL adapter is implemented. Apply migrations through 0010 first. The optional
+`docker compose --profile single up single` profile still uses one process and a JSON volume.
+See [storage constraints](storage.md) and [full-stack tests](testing.md).
 
 ## What the API asserts on every response
 
@@ -206,7 +202,7 @@ sidecar rather than behind a token that ends up in a scrape configuration in a r
 | Sync duration, last success, stale and failing leagues | Aggregates, not per-league series. No alert is improved by knowing which of four hundred leagues is oldest; the runbook says how to find it. |
 | Forecast age, source timestamp, player count, identity-match rate, coverage | The source timestamp is the only thing that catches a source which stopped publishing while still answering 200. |
 | Recommendation readiness and **why** advice was withheld | Refusing to rank is designed behaviour, so the reason is the only operational signal there is. |
-| Storage query latency and failures by operation; pool utilization | Timed at the repository seam, so the numbers exist for the JSON adapter today and for PostgreSQL the day it lands. The pool series are *absent* rather than zero when there is no pool. |
+| Storage query latency and failures by operation; pool utilization | Timed at the repository seam, so the numbers exist for both JSON and PostgreSQL. The pool series are *absent* rather than zero when there is no pool. |
 | Worker sweep lag, queue depth, jobs in flight, lock contention | Lag is what separates "the worker is running" from "the worker is keeping up" — a worker stuck behind a slow upstream answers its probe perfectly. Sweep-lease contention means a second worker is running that `SYNC_WORKER_ENABLED=false` should have opted out. |
 
 The image scan's gate covers OS packages, which each Dockerfile keeps current with `apk upgrade`, and
@@ -275,6 +271,7 @@ are always the ones that release expects.
 4. **Replace the worker.** One at a time, and never two at once: the old one releases its leases as it
    drains rather than leaving them to expire.
 5. **Publish the web build** — assets first, then `index.html`.
+6. **Run the staging smoke test** with `npm run test:smoke` and fail deployment verification if it fails. GitHub deployment-status events trigger this automatically; other deployment runners must invoke it explicitly. See [staging credentials and hooks](testing.md#staging-after-deployment).
 
 **Migrations must be safe for both releases at once.** Between steps 2 and 4 the old code is running
 against the new schema, and during a rollback the new schema meets the old code again. So anything
@@ -391,7 +388,6 @@ orchestrator's restart loop is recognizable as a configuration failure rather th
 | --- | --- |
 | `STORAGE_ADAPTER` | Production, and no adapter named. It will not guess. |
 | `the JSON adapter cannot back a multi-instance production deployment` | `APP_INSTANCE_MODE=multi` with `STORAGE_ADAPTER=json`. |
-| `no PostgreSQL adapter is implemented yet` | `STORAGE_ADAPTER=postgres`. The schema exists; the adapter does not. |
 | `WEB_ORIGIN` | Unset in production, not https, or an origin with a path. |
 | `APP_LOGIN_PASSWORD_HASH is not a scrypt hash` | A plaintext password where the hash belongs. |
 | `APP_LOGIN_USER must be lowercase` | Sign-in lowercases the submitted login, so `Admin` would seed an account nothing can sign in to. |

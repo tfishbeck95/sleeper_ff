@@ -45,8 +45,10 @@ function publicUser(user: import('./store.js').ApplicationUser){return {id:user.
 async function syncState(store: HuddleRepository, worker: LeagueSyncWorker, leagueId: string, job?: QueuedSyncJob) {
   const connection = await store.leagueConnection(leagueId);
   const state = worker.state(leagueId);
+  const activeLease = await store.lease(`league-sync:publish:${leagueId}`);
+  const running = state.running || Boolean(activeLease && Date.parse(activeLease.expiresAt) > Date.now());
   return {
-    leagueId, queued: state.queued || Boolean(job), running: state.running, queuePosition: state.position || null, queuedAt: job?.queuedAt ?? null,
+    leagueId, queued: state.queued || Boolean(job), running, queuePosition: state.position || null, queuedAt: job?.queuedAt ?? null,
     status: connection?.status ?? 'active', season: connection?.season ?? null, week: connection?.week ?? null,
     lastSyncedAt: connection?.lastSyncedAt ?? null, lastStatus: connection?.lastStatus ?? null,
     lastCategory: connection?.lastCategory ?? null, lastDurationMs: connection?.lastDurationMs ?? null,

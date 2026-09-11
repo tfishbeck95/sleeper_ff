@@ -194,7 +194,7 @@ export function validateEnvironment(env: NodeJS.ProcessEnv = process.env, { serv
   const port = found.number(env, 'PORT', 4000, { min: 1, max: 65_535, integer: true });
 
   // --- Origins allowed to send credentialed requests ---
-  found.attempt(() => validateAuthenticationConfig(env));
+  found.attempt(() => validateAuthenticationConfig(env, { servesHttp }));
   const webOrigins = found.attempt(() => parseWebOrigins(env.WEB_ORIGIN, { production })) ?? [];
   const origins = webOrigins.length ? webOrigins : production ? [] : ['http://localhost:5173'];
 
@@ -262,6 +262,15 @@ export function validateEnvironment(env: NodeJS.ProcessEnv = process.env, { serv
   // --- Reverse proxies ---
   // One parser, shared with the application, so what is validated here is what Express is told.
   const trustProxy = found.attempt(() => parseTrustProxy(env.TRUST_PROXY, { production, servesHttp })) ?? false;
+
+  // A configurable upstream supports private mirrors and deterministic contract replay.
+  if (env.SLEEPER_API_BASE_URL !== undefined) {
+    try {
+      const url = new URL(env.SLEEPER_API_BASE_URL);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+        found.add('SLEEPER_API_BASE_URL must be an HTTP(S) base URL without credentials, query or fragment.');
+    } catch { found.add('SLEEPER_API_BASE_URL must be an absolute HTTP(S) base URL.'); }
+  }
 
   // --- Upstream timeout and retry budgets ---
   const upstream = validateUpstreamBudgets(env, found, shutdownGraceMs);

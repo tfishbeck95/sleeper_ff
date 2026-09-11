@@ -135,21 +135,28 @@ sometimes the point.
 
 ## The PostgreSQL adapter
 
-The schema exists and is verified; the adapter that speaks to it is not written yet. Selecting
-`STORAGE_ADAPTER=postgres` refuses at startup, naming the schema and the contract, rather than accepting
-the configuration and failing on the first query in front of a user.
+`STORAGE_ADAPTER=postgres` selects `apps/api/src/storage/postgres.ts`. Apply migrations through
+0010 before starting either process. The adapter uses the existing normalized tables, including
+accounts, session digests, scoring citations and ownership joins; it does not put application state
+in a single JSON database row. Both adapters run the same repository conformance cases.
 
-Writing it means implementing `HuddleRepository` over `pg` and passing the conformance suite:
+One SQL statement reads a consistent MVCC snapshot. Mutations acquire a transaction-scoped advisory
+lock, apply the shared repository rules, and persist only changed rows in foreign-key order. Errors
+roll back the complete operation. This first adapter favors correctness for a small installation:
+it materializes repository state and serializes mutations across processes, so it is **not a
+high-throughput storage implementation**. Measure its memory, query latency and lock contention before
+scaling to many accounts; narrower SQL projections and per-entity locking are future optimizations.
+Sync history uses explicit retention, without the JSON adapter's global 100-entry cap.
 
-```ts
-import { repositoryContract } from './contract.js';
-repositoryContract('postgres', async () => new PostgresRepository(process.env.TEST_DATABASE_URL!));
-```
+API and worker synchronization share a publication lease, and each snapshot commit verifies that the
+publisher still holds it. Metadata, rosters and matchup replacements publish atomically. A lost lease
+cannot authorize a late write over a successor. A killed worker's lease expires and its connection
+remains eligible for a later sweep. Failed metadata refreshes retain the previous raw rules and weekly
+observations while withholding actionable scoring.
 
-The suite is written against the interface alone, so both adapters run exactly the same cases — which is
-what makes them interchangeable rather than merely similar. Four things in the schema do most of the
-work for that adapter: `huddle_acquire_lease` is the whole `LeaseRepository.acquireLease`
-implementation, `huddle_apply_retention` is the retention methods, the deferred citation constraints let
-a recommendation and the snapshots it cites be written in one statement batch in any order, and
-`ON DELETE CASCADE` from `league` and `league_connection` makes `pruneLeague` a two-statement
-transaction.
+Migration 0010 preserves full weekly roster/matchup payloads, backfills old observations, adds the legacy
+dashboard snapshot relation, accepts opaque synchronization-run ids, and repairs the scoring-reference
+foreign key so deleting a scoring observation never nulls a league's primary key. Its rollback removes
+the new payload/table but deliberately retains text sync ids and the corrected foreign-key behavior;
+narrowing new ids to UUID would destroy history. Roll the application back before rolling the schema back.
+See [full-stack and migration tests](testing.md).

@@ -52,17 +52,17 @@ export function sessionPolicy(env: NodeJS.ProcessEnv = process.env): SessionPoli
   return { absoluteMs, idleMs, rotateMs: Math.min(positiveNumber(env, 'SESSION_ROTATE_MINUTES', 30, MINUTE), absoluteMs), graceMs: positiveNumber(env, 'SESSION_ROTATION_GRACE_SECONDS', 60, 1000), touchMs: Math.min(MINUTE, idleMs / 10) };
 }
 
-export function validateAuthenticationConfig(env: NodeJS.ProcessEnv = process.env) {
+export function validateAuthenticationConfig(env: NodeJS.ProcessEnv = process.env, { servesHttp = true } = {}) {
   const production = env.NODE_ENV === 'production';
   if (production && env.ENABLE_DEMO_AUTH === 'true') throw new Error('Refusing to start: demo authentication cannot be enabled in production.');
   if (production && env.INSECURE_DEV_COOKIES === 'true') throw new Error('Refusing to start: INSECURE_DEV_COOKIES cannot be enabled in production.');
-  if (production && !env.APP_LOGIN_PASSWORD_HASH && !env.IDENTITY_PROVIDER) throw new Error('Production requires APP_LOGIN_PASSWORD_HASH or an application identity provider.');
+  if (production && servesHttp && !env.APP_LOGIN_PASSWORD_HASH && !env.IDENTITY_PROVIDER) throw new Error('Production requires APP_LOGIN_PASSWORD_HASH or an application identity provider.');
   if (production && env.APP_LOGIN_PASSWORD_HASH && !/^scrypt:[0-9a-f]+:[0-9a-f]+$/.test(env.APP_LOGIN_PASSWORD_HASH)) throw new Error('Refusing to start: APP_LOGIN_PASSWORD_HASH is not a scrypt hash. Generate one with npm run password-hash.');
-  if (production && !env.WEB_ORIGIN?.trim()) throw new Error('Refusing to start: WEB_ORIGIN must name the browser origin allowed to send credentialed requests.');
+  if (production && servesHttp && !env.WEB_ORIGIN?.trim()) throw new Error('Refusing to start: WEB_ORIGIN must name the browser origin allowed to send credentialed requests.');
   // One parser for the allowed origins, shared with the CORS layer, so the set that is checked here is
   // the set that is actually granted.
   const origins = parseWebOrigins(env.WEB_ORIGIN, { production });
-  if (production && !origins.length) throw new Error('Refusing to start: WEB_ORIGIN must name the browser origin allowed to send credentialed requests.');
+  if (production && servesHttp && !origins.length) throw new Error('Refusing to start: WEB_ORIGIN must name the browser origin allowed to send credentialed requests.');
   sessionPolicy(env);
 }
 
