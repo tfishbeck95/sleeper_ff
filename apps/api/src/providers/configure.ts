@@ -10,7 +10,7 @@ import { ProjectionIngestionService } from './ingest.js';
 import { NflverseReferenceProvider } from './nflverse.js';
 import type { ProjectionProvider, ReferenceDataProvider } from './provider.js';
 import { IngestionSchedule, type ScheduleOptions } from './schedule.js';
-import { CompositeAlerter, ConsoleAlerter, DEFAULT_SERVICE_LEVEL, WebhookAlerter, type Alerter, type ServiceLevel } from './service-level.js';
+import { CompositeAlerter, ConsoleAlerter, DEFAULT_SERVICE_LEVEL, MeteredAlerter, WebhookAlerter, type Alerter, type ServiceLevel } from './service-level.js';
 import { SportsDataIoProvider } from './sportsdataio.js';
 
 /**
@@ -39,7 +39,8 @@ export function serviceLevelFromEnv(env: NodeJS.ProcessEnv = process.env): Servi
 export function alerterFromEnv(env: NodeJS.ProcessEnv = process.env): Alerter {
   const console = new ConsoleAlerter();
   const webhook = env.PROJECTION_FEED_ALERT_WEBHOOK?.trim();
-  return webhook ? new CompositeAlerter([new WebhookAlerter(webhook, fetch, console)]) : console;
+  // Metered on the outside, so every run is counted whether or not its alert could be delivered.
+  return new MeteredAlerter(webhook ? new CompositeAlerter([new WebhookAlerter(webhook, fetch, console)]) : console);
 }
 
 /**

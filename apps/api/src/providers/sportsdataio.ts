@@ -1,6 +1,7 @@
 import type { EmpiricalBasis } from './derivation.js';
 import { NFLVERSE_BASIS } from './derivation.js';
 import { ProviderHttpClient, requireCredential } from './http.js';
+import { providerHttpOptions } from '../config/upstream.js';
 import type {
   ProjectionProvider, ProviderCapabilities, ProviderDefenseLine, ProviderFetch, ProviderIdentity,
   ProviderKickerLine, ProviderPlayerProjection, ProviderWeekProjection, SourceLicense,
@@ -122,7 +123,8 @@ export class SportsDataIoProvider implements ProjectionProvider {
   private readonly apiKey: string;
 
   constructor(options: SportsDataIoOptions = {}) {
-    this.http = new ProviderHttpClient(this.source.name, options.fetcher, { timeoutMs: options.timeoutMs, maxRetries: options.maxRetries });
+    // Ingestion runs on a schedule with nobody waiting, so it takes the shared 'background' budget.
+    this.http = new ProviderHttpClient(this.source.name, options.fetcher, providerHttpOptions('background', { timeoutMs: options.timeoutMs, maxRetries: options.maxRetries }));
     this.baseUrl = options.baseUrl ?? BASE;
     this.basis = options.basis ?? NFLVERSE_BASIS;
     this.apiKey = options.apiKey ?? requireCredential(this.source.credentialEnvVar!);

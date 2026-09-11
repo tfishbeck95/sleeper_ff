@@ -18,8 +18,8 @@ const production = {
   WAIVER_SIGNALS_PATH: '/srv/huddle/waiver-signals.json',
 } satisfies NodeJS.ProcessEnv;
 
-const problems = (env: NodeJS.ProcessEnv): string[] => {
-  try { validateEnvironment(env); return []; }
+const problems = (env: NodeJS.ProcessEnv, context?: Parameters<typeof validateEnvironment>[1]): string[] => {
+  try { validateEnvironment(env, context); return []; }
   catch (error) { assert.ok(error instanceof EnvironmentError); return error.problems; }
 };
 const matching = (env: NodeJS.ProcessEnv, pattern: RegExp) => problems(env).filter(problem => pattern.test(problem));
@@ -148,12 +148,16 @@ test('the worker health probe is off unless a port is named, and cannot collide 
 });
 
 test('the proxy count is validated rather than handed to Express to interpret', () => {
-  assert.equal(validateEnvironment({ ...production, TRUST_PROXY: undefined }).trustProxy, false);
-  assert.equal(validateEnvironment({ ...production, TRUST_PROXY: 'true' }).trustProxy, true);
   assert.equal(validateEnvironment({ ...production, TRUST_PROXY: '2' }).trustProxy, 2);
   assert.equal(validateEnvironment({ ...production, TRUST_PROXY: 'loopback' }).trustProxy, 'loopback');
   assert.equal(validateEnvironment({ ...production, TRUST_PROXY: '10.0.0.0/8, 192.168.0.1' }).trustProxy, '10.0.0.0/8, 192.168.0.1');
+  // An API exposed directly is a legitimate deployment; it just has to say so rather than be assumed.
+  assert.equal(validateEnvironment({ ...production, TRUST_PROXY: 'false' }).trustProxy, false);
   assert.ok(matching({ ...production, TRUST_PROXY: 'yes' }, /TRUST_PROXY/).length);
+  assert.ok(matching({ ...production, TRUST_PROXY: '99' }, /more proxies than any deployment/).length);
+  // Outside production there is no proxy and no attacker, so an unset value is the direct case.
+  assert.equal(validateEnvironment({ NODE_ENV: 'development' }).trustProxy, false);
+  assert.equal(validateEnvironment({ NODE_ENV: 'development', TRUST_PROXY: 'true' }).trustProxy, true);
 });
 
 test('storage refusals still apply, and their warnings are carried rather than swallowed', () => {
@@ -168,9 +172,30 @@ test('a deployment with no forecast source at all is a warning, not a refusal', 
   assert.ok(configuration.warnings.some(warning => /No forecast source/.test(warning)));
 });
 
-test('a production deployment with no proxy configured is warned that rate limits share one bucket', () => {
-  const configuration = validateEnvironment({ ...production, TRUST_PROXY: undefined });
-  assert.ok(configuration.warnings.some(warning => /TRUST_PROXY/.test(warning)));
+test('production states what is in front of it rather than being guessed at', () => {
+  // Unset is the failure that looks like it works: behind a proxy every client shares one rate-limit
+  // bucket, and nothing says so until the first person to exhaust it locks out everybody else.
+  assert.ok(matching({ ...production, TRUST_PROXY: undefined }, /TRUST_PROXY is not set/).length);
+  // `true` believes the whole X-Forwarded-For chain, including the part the client wrote — which
+  // lets a caller pick the address their rate limit is charged to, one per request.
+  assert.ok(matching({ ...production, TRUST_PROXY: 'true' }, /whole X-Forwarded-For chain/).length);
+  // The worker binds no application port and has no client address to charge anything to, so it is
+  // not asked for a value it could not use. A malformed one is still refused there.
+  const worker = { ...production, TRUST_PROXY: undefined };
+  assert.equal(validateEnvironment(worker, { servesHttp: false }).trustProxy, false);
+  assert.ok(problems({ ...worker, TRUST_PROXY: 'yes' }).length);
+});
+
+test('upstream budgets are validated, and a total shorter than one attempt is refused', () => {
+  const configuration = validateEnvironment({ ...production, UPSTREAM_TIMEOUT_SECONDS: '8', UPSTREAM_REQUEST_BUDGET_SECONDS: '16' });
+  assert.equal(configuration.upstream.interactive.timeoutMs, 8_000);
+  assert.equal(configuration.upstream.interactive.maxElapsedMs, 16_000);
+  assert.ok(matching({ ...production, UPSTREAM_TIMEOUT_SECONDS: 'soon' }, /UPSTREAM_TIMEOUT_SECONDS/).length);
+  assert.ok(matching({ ...production, UPSTREAM_MAX_ATTEMPTS: '0' }, /UPSTREAM_MAX_ATTEMPTS/).length);
+  assert.ok(matching({ ...production, UPSTREAM_TIMEOUT_SECONDS: '30', UPSTREAM_REQUEST_BUDGET_SECONDS: '10' }, /no attempt could ever finish/).length);
+  // A budget outliving the drain is allowed and said out loud: the request is cut short, not wrong.
+  const stretched = validateEnvironment({ ...production, SHUTDOWN_GRACE_SECONDS: '5' });
+  assert.ok(stretched.warnings.some(warning => /SHUTDOWN_GRACE_SECONDS/.test(warning)));
 });
 
 test('demo authentication stays a development affordance whatever the flag says', () => {

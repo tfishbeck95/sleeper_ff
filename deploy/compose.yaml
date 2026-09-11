@@ -86,6 +86,9 @@ services:
       # One proxy in front: the static server, or whatever terminates TLS in a real deployment. Without
       # it every request looks like it came from that proxy and the rate limits share one bucket.
       TRUST_PROXY: "1"
+      # Metrics and probes on their own port, deliberately not published below: a scrape describes
+      # the deployment — route names, traffic, error rates — and belongs on an internal network.
+      METRICS_PORT: "4001"
       # The read side of the forecast feed. No credential: this process never calls the source, it reads
       # what the worker retained.
       PROJECTION_FEED_ENABLED: ${PROJECTION_FEED_ENABLED:-false}
@@ -127,7 +130,8 @@ services:
       SYNC_WORKER_ID: huddle-worker
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-30}
       SYNC_CONCURRENCY: ${SYNC_CONCURRENCY:-3}
-      # The worker serves no application traffic, so this is the only thing an orchestrator can ask it.
+      # The worker serves no application traffic, so this is the only thing an orchestrator can ask
+      # it: /health/live, /health/ready and /metrics, on an unpublished port.
       WORKER_HEALTH_PORT: "4010"
       PROJECTION_FEED_ENABLED: ${PROJECTION_FEED_ENABLED:-false}
       # The licensed forecast credential, in the one component that calls the source.
@@ -144,7 +148,9 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4010/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # Liveness: this check replaces the container, so it must not fail on a database blip or
+      # during a drain. `/health/ready` is the one a load balancer would ask.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4010/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       start_period: 10s
@@ -199,6 +205,8 @@ services:
       APP_LOGIN_USER: ${APP_LOGIN_USER:-admin}
       APP_LOGIN_PASSWORD_HASH: "${APP_LOGIN_PASSWORD_HASH:?generate one with npm run password-hash -w @sleeper/api}"
       TRUST_PROXY: "1"
+      # Not published below: a scrape describes the deployment and belongs on an internal network.
+      METRICS_PORT: "4001"
       PROJECTION_FEED_ENABLED: ${PROJECTION_FEED_ENABLED:-false}
       SPORTSDATAIO_API_KEY: ${SPORTSDATAIO_API_KEY:-}
       PROJECTION_FEED_PATH: /var/lib/huddle/projection-feed.json

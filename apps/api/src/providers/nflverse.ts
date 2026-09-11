@@ -1,5 +1,6 @@
 import { ProviderHttpClient } from './http.js';
 import type { IdentityLink, ProviderInjury, ReferenceDataProvider, SourceLicense } from './provider.js';
+import { providerHttpOptions } from '../config/upstream.js';
 
 /**
  * nflverse reference-data driver: identity map, bye weeks and official injury reports.
@@ -65,7 +66,9 @@ export class NflverseReferenceProvider implements ReferenceDataProvider {
   private readonly urls: { identity: string; schedule: string; injuries: (season: string) => string };
 
   constructor(options: NflverseOptions = {}) {
-    this.http = new ProviderHttpClient(this.source.name, options.fetcher, { timeoutMs: options.timeoutMs ?? 30_000, maxRetries: options.maxRetries });
+    // Bulk reference data is published as multi-megabyte CSV, so the attempt is long because the
+    // transfer is. The budget is the shared 'bulk' profile rather than a number chosen here.
+    this.http = new ProviderHttpClient(this.source.name, options.fetcher, providerHttpOptions('bulk', { timeoutMs: options.timeoutMs, maxRetries: options.maxRetries }));
     this.urls = { identity: options.identityMapUrl ?? IDENTITY_MAP_URL, schedule: options.scheduleUrl ?? SCHEDULE_URL, injuries: options.injuriesUrl ?? injuriesUrl };
   }
 

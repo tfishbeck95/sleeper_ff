@@ -1,4 +1,5 @@
 import { beginDraining } from './lifecycle.js';
+import { logger } from './log.js';
 
 /**
  * Stopping on purpose.
@@ -31,8 +32,8 @@ export interface ShutdownLogger {
 }
 
 const consoleLogger: ShutdownLogger = {
-  info: message => console.info(message),
-  error: (message, error) => (error === undefined ? console.error(message) : console.error(message, error)),
+  info: message => logger.info({ component: 'shutdown' }, message),
+  error: (message, error) => (error === undefined ? logger.error({ component: 'shutdown' }, message) : logger.error({ component: 'shutdown', error }, message)),
 };
 
 /** The part of `process` this needs, so a test can drive it without signalling itself. */
