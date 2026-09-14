@@ -376,6 +376,18 @@ covers OS packages only. The reasoning is the same in both halves: gate on what 
   advisories in `crypto/tls`, `net/url` and `net/mail`. Nothing here builds it, `apk` cannot touch
   it, and it is fixed only when its maintainers rebuild against a newer Go. None of those code paths
   is reachable from what gosu does.
+- Neither is a *library tree* vendored into one, which is the same case wearing different clothes.
+  The `node:*-alpine` images ship the npm CLI at `/usr/local/lib/node_modules/npm`, and trivy reads
+  its bundled dependencies as the image's own: `tar`, `pacote`, `sigstore`, `ip-address`,
+  `brace-expansion`, `picomatch`. They belong to npm, not to this application — `pacote` and
+  `sigstore` are how npm fetches and verifies packages, which nothing here does at run time — and
+  they are fixed when the base image ships a newer npm.
+
+**Read that list against the lockfile rather than trusting the shape of it**, because the one thing
+this exclusion could hide is a package that really is ours. Two checks settle it, and the second is
+the one that matters: the package is absent from `package-lock.json`, and the `audit` job — which
+reads the lockfile and blocks — is green. A name that appears in both the image report and the
+lockfile is ours to fix, whatever else is in the same table.
 
 The full report is printed on every run regardless, so nothing is filtered away before anyone sees
 it — only the gate is narrowed. **If a finding appears that a change here could fix, it blocks.**

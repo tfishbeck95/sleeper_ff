@@ -351,7 +351,12 @@ jobs:
             # net/mail. `apk` cannot touch it, nothing in this repository builds it, and it is fixed
             # only when its maintainers rebuild against a newer Go. None of those paths is reachable
             # from what gosu does — exec a process as another user — and blocking a build on a
-            # finding no change can clear is how a scanner stops being read at all.
+            # finding no change can clear is how a scanner stops being read at all. The same applies
+            # to the npm CLI the node images ship at /usr/local/lib/node_modules/npm, whose bundled
+            # dependencies trivy reads as the image's own.
+            #
+            # The `audit` job above is what keeps that exclusion honest: it reads the lockfile, it
+            # blocks, and a package that is genuinely ours fails there whatever this gate skips.
             echo "::group::$image — gate"
             trivy image "$image" \
               --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --pkg-types os \
